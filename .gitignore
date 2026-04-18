@@ -1,0 +1,7 @@
+/.env
+/llms/
+/config.yaml
+.env
+config.yaml
+test/*
+data/postgres/*

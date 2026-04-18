@@ -1,0 +1,110 @@
+services:
+  slukhoteka-db-test:
+    image: postgres:15-alpine
+    container_name: slukhoteka-db-test
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-slukhoteka}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-slukhoteka_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-slukhoteka}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    networks:
+      - slukhoteka-network-test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-slukhoteka}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  slukhoteka-backend-test:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: slukhoteka-backend-test
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-slukhoteka}:${POSTGRES_PASSWORD:-slukhoteka_pass}@slukhoteka-db-test:5432/${POSTGRES_DB:-slukhoteka}
+      ADMIN_USER_PH: ${ADMIN_USER_PH}
+      YANDEX_DISK_TOKEN: ${YANDEX_DISK_TOKEN}
+      FILE_NAME: ${FILE_NAME}
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-120}
+      START_HOUR: ${START_HOUR:-0}
+      END_HOUR: ${END_HOUR:-23}
+      TIME_SLOT_DURATION: ${TIME_SLOT_DURATION:-1}
+      COLOR_FREE: ${COLOR_FREE:-🟩}
+      COLOR_BUSY: ${COLOR_BUSY:-🟨}
+    depends_on:
+      slukhoteka-db-test:
+        condition: service_healthy
+    networks:
+      - slukhoteka-network-test
+    volumes:
+      - ./backend/app:/app/app
+      - ./data/ics_files:/app/data/ics_files
+
+  slukhoteka-tg-bot-test:
+    build:
+      context: ./tg-bot
+      dockerfile: Dockerfile
+    container_name: slukhoteka-tg-bot-test
+    restart: unless-stopped
+    environment:
+      BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      BACKEND_URL: http://slukhoteka-backend-test:8000
+      ADMIN_USER_PH: ${ADMIN_USER_PH}
+      START_HOUR: ${START_HOUR:-0}
+      END_HOUR: ${END_HOUR:-23}
+      TIME_SLOT_DURATION: ${TIME_SLOT_DURATION:-1}
+      COLOR_FREE: ${COLOR_FREE:-🟩}
+      COLOR_BUSY: ${COLOR_BUSY:-🟨}
+    depends_on:
+      - slukhoteka-backend-test
+    networks:
+      - slukhoteka-network-test
+    volumes:
+      - ./data/voice:/app/voice
+
+  slukhoteka-vk-bot-test:
+    build:
+      context: ./vk-bot
+      dockerfile: Dockerfile
+    container_name: slukhoteka-vk-bot-test
+    restart: unless-stopped
+    environment:
+      VK_BOT_TOKEN: ${VK_BOT_TOKEN}
+      VK_GROUP_ID: ${VK_GROUP_ID}
+      BACKEND_URL: http://slukhoteka-backend-test:8000
+      START_HOUR: ${START_HOUR:-0}
+      END_HOUR: ${END_HOUR:-23}
+      TIME_SLOT_DURATION: ${TIME_SLOT_DURATION:-1}
+      COLOR_FREE: ${COLOR_FREE:-🟩}
+      COLOR_BUSY: ${COLOR_BUSY:-🟨}
+    depends_on:
+      - slukhoteka-backend-test
+    networks:
+      - slukhoteka-network-test
+
+  slukhoteka-aggregator-test:
+    build:
+      context: ./aggregator
+      dockerfile: Dockerfile
+    container_name: slukhoteka-aggregator-test
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: http://slukhoteka-backend-test:8000
+      YANDEX_DISK_TOKEN: ${YANDEX_DISK_TOKEN}
+      FILE_NAME: ${FILE_NAME}
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-120}
+    depends_on:
+      - slukhoteka-backend-test
+    networks:
+      - slukhoteka-network-test
+    profiles:
+      - aggregator
+
+networks:
+  slukhoteka-network-test:
+    driver: bridge
