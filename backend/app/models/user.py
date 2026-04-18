@@ -20,8 +20,8 @@ class GlobalUser(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     platform_users = relationship("PlatformUser", back_populates="global_user", cascade="all, delete-orphan")
-    bookings_as_specialist = relationship("Booking", foreign_keys="Booking.specialist_id", back_populates="specialist")
-    groups = relationship("Group", back_populates="specialist")
+    schedules = relationship("Schedule", back_populates="global_user", cascade="all, delete-orphan")
+    clients = relationship("Client", back_populates="global_user", cascade="all, delete-orphan")
     invite_codes_created = relationship("InviteCode", foreign_keys="InviteCode.created_by", back_populates="creator")
     invite_codes_used = relationship("InviteCode", foreign_keys="InviteCode.used_by", back_populates="user")
 

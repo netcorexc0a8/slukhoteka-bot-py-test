@@ -1,29 +1,22 @@
 from pydantic import BaseModel
-from datetime import datetime, date
+from datetime import datetime
 from typing import Optional
-
 
 class ClientBase(BaseModel):
     name: str
     phone: str
-    birth_date: Optional[date] = None
-    notes: Optional[str] = None
-
 
 class ClientCreate(ClientBase):
-    pass
-
+    global_user_id: int
 
 class ClientUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
-    birth_date: Optional[date] = None
-    notes: Optional[str] = None
     is_active: Optional[bool] = None
-
 
 class ClientResponse(ClientBase):
     id: int
+    global_user_id: int
     is_active: bool
     created_at: datetime
     updated_at: datetime
