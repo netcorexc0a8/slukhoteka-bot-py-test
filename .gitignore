@@ -3,5 +3,5 @@
 /config.yaml
 .env
 config.yaml
-test/vk_test_bot.py
+tests/vk_test_bot.py
 data/postgres/
