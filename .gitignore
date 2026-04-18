@@ -3,5 +3,5 @@
 /config.yaml
 .env
 config.yaml
-test/*
-data/postgres/*
+test/
+data/postgres/
