@@ -133,6 +133,15 @@ class BackendAPIClient:
             response.raise_for_status()
             return response.json()
 
+    async def subscription_update(self, subscription_id: int, **kwargs) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.put(
+                f"{self.base_url}/api/v1/subscriptions/{subscription_id}",
+                json=kwargs,
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def subscription_delete(self, subscription_id: int) -> bool:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.delete(

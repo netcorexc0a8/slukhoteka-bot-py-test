@@ -32,6 +32,8 @@ class SubscriptionState(StatesGroup):
     client_subscriptions = State()
     issue_select_service = State()
     issue_select_group = State()  # для алгоритмики — выбор группы
+    cancel_select_sub = State()
+    cancel_confirm = State()
 
 
 RETURN_KEY = "subscriptions_return_to"
@@ -148,10 +150,16 @@ async def _show_subs_for_client(callback: CallbackQuery, state: FSMContext):
 
     text = "\n".join(lines)
 
-    buttons = [
-        [InlineKeyboardButton(text="🎫 Выдать новый абонемент", callback_data="subs_issue_start")],
-        [InlineKeyboardButton(text="⬅️ Назад к клиентам", callback_data="subscriptions_menu")],
-    ]
+    buttons = []
+    for s in subs:
+        if s.get("status") == "active":
+            label = f"❌ Отменить {s.get('service_name', '')[:20]}..."
+            buttons.append([InlineKeyboardButton(
+                text=label,
+                callback_data=f"subs_cancel_{s['id']}",
+            )])
+    buttons.append([InlineKeyboardButton(text="🎫 Выдать новый абонемент", callback_data="subs_issue_start")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад к клиентам", callback_data="subscriptions_menu")])
 
     await callback.message.edit_text(
         text,
@@ -383,6 +391,46 @@ async def _after_issue_success(callback, state: FSMContext, sub: dict, group_nam
                 InlineKeyboardButton(text="⬅️ К абонементам клиента", callback_data="subs_back_client")
             ]]),
         )
+
+
+@router.callback_query(F.data.startswith("subs_cancel_"), SubscriptionState.client_subscriptions)
+async def subs_cancel_start(callback: CallbackQuery, state: FSMContext):
+    sub_id = int(callback.data.rsplit("_", 1)[-1])
+    await state.update_data(cancel_sub_id=sub_id)
+    await state.set_state(SubscriptionState.cancel_confirm)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Да, отменить абонемент", callback_data="subs_cancel_confirm")],
+        [InlineKeyboardButton(text="⬅️ Отмена", callback_data="subs_back_client")],
+    ])
+    await callback.message.edit_text(
+        "Отменить абонемент? Это действие нельзя отменить.\n"
+        "Активные записи (если есть) останутся, но абонемент будет помечен как отменённый.",
+        reply_markup=keyboard,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "subs_cancel_confirm", SubscriptionState.cancel_confirm)
+async def subs_cancel_confirm(callback: CallbackQuery, state: FSMContext):
+    user_data = await state.get_data()
+    sub_id = user_data.get("cancel_sub_id")
+    try:
+        api = BackendAPIClient()
+        updated_sub = await api.subscription_update(sub_id, status="cancelled")
+    except Exception as e:
+        logger.exception("subscription_cancel error")
+        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        "✅ Абонемент отменён.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⬅️ К абонементам клиента", callback_data="subs_back_client")
+        ]]),
+    )
+    await state.set_state(SubscriptionState.client_subscriptions)
+    await callback.answer()
 
 
 @router.callback_query(F.data == "subs_back_client")
