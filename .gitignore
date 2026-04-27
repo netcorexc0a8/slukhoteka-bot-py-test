@@ -5,3 +5,4 @@
 config.yaml
 tests/vk_test_bot.py
 data/postgres/
+README_STAGE2.md

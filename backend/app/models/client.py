@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 
+
 class Client(Base):
     __tablename__ = "clients"
 
@@ -16,3 +17,13 @@ class Client(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     global_user = relationship("GlobalUser", back_populates="clients")
+    subscriptions = relationship(
+        "ClientSubscription",
+        back_populates="client",
+        cascade="all, delete-orphan",
+    )
+    bookings = relationship(
+        "Booking",
+        back_populates="client",
+        cascade="all, delete-orphan",
+    )

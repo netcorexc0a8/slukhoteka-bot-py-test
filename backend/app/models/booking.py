@@ -1,4 +1,7 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Enum
+from sqlalchemy import (
+    Column, Integer, String, Text, DateTime, ForeignKey, Boolean,
+    CheckConstraint, Enum as SAEnum, Table,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -18,20 +21,62 @@ class BookingType(str, enum.Enum):
     GROUP = "group"
 
 
+# m2m: ведущие конкретного занятия. Используется только для групповых занятий.
+booking_specialists = Table(
+    "booking_specialists",
+    Base.metadata,
+    Column("booking_id", Integer, ForeignKey("bookings.id", ondelete="CASCADE"), primary_key=True),
+    Column("specialist_id", Integer, ForeignKey("global_users.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class Booking(Base):
     __tablename__ = "bookings"
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    subscription_id = Column(
+        Integer,
+        ForeignKey("client_subscriptions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     service_id = Column(Integer, ForeignKey("services.id", ondelete="RESTRICT"), nullable=False, index=True)
-    specialist_id = Column(Integer, ForeignKey("global_users.id", ondelete="RESTRICT"), nullable=False, index=True)
-    group_id = Column(String(100), ForeignKey("groups.id", ondelete="SET NULL"), nullable=True, index=True)
+    specialist_id = Column(
+        Integer,
+        ForeignKey("global_users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    group_id = Column(
+        String(100),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     start_time = Column(DateTime(timezone=True), nullable=False, index=True)
     end_time = Column(DateTime(timezone=True), nullable=False)
 
-    booking_type = Column(Enum(BookingType), nullable=False, index=True)
-    status = Column(Enum(BookingStatus), nullable=False, index=True, default=BookingStatus.SCHEDULED)
+    booking_type = Column(
+        SAEnum(
+            BookingType,
+            name="booking_type_enum",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        index=True,
+    )
+    status = Column(
+        SAEnum(
+            BookingStatus,
+            name="booking_status_enum",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        index=True,
+        default=BookingStatus.SCHEDULED,
+    )
 
     notes = Column(Text, nullable=True)
     is_recurring = Column(Boolean, default=False, nullable=False)
@@ -45,8 +90,19 @@ class Booking(Base):
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
     cancelled_by = Column(Integer, ForeignKey("global_users.id", ondelete="SET NULL"), nullable=True)
 
+    __table_args__ = (
+        CheckConstraint("end_time > start_time", name="chk_time_order"),
+    )
+
     client = relationship("Client", back_populates="bookings")
+    subscription = relationship("ClientSubscription", back_populates="bookings")
     service = relationship("Service", back_populates="bookings")
     specialist = relationship("GlobalUser", foreign_keys=[specialist_id])
     group = relationship("Group", back_populates="bookings")
     cancelled_by_user = relationship("GlobalUser", foreign_keys=[cancelled_by])
+
+    co_specialists = relationship(
+        "GlobalUser",
+        secondary=booking_specialists,
+        backref="co_led_bookings",
+    )

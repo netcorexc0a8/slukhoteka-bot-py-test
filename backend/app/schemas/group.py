@@ -6,8 +6,7 @@ from typing import Optional, List
 class GroupBase(BaseModel):
     name: str
     service_id: int
-    specialist_id: int
-    max_participants: int = 6
+    max_participants: int = 8
     day_of_week: Optional[int] = None
     time: Optional[str] = None
 
@@ -18,7 +17,6 @@ class GroupCreate(GroupBase):
 
 class GroupUpdate(BaseModel):
     name: Optional[str] = None
-    specialist_id: Optional[int] = None
     max_participants: Optional[int] = None
     day_of_week: Optional[int] = None
     time: Optional[str] = None
