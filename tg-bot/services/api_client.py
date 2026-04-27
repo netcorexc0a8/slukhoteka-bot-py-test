@@ -1,8 +1,6 @@
 """
 HTTP-клиент к backend.
-
-Полностью обновлён под новую архитектуру: bookings + subscriptions + services
-вместо schedules. Старые методы schedule_* удалены.
+Методы для bookings + subscriptions + services + groups.
 """
 import httpx
 from typing import Optional, Dict, Any, List
@@ -61,7 +59,7 @@ class BackendAPIClient:
                 return None
 
     # ------------------------------------------------------------------
-    # SERVICES (справочник типов абонементов)
+    # SERVICES
     # ------------------------------------------------------------------
     async def services_list(self) -> List[Dict[str, Any]]:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -91,7 +89,7 @@ class BackendAPIClient:
             return response.json()
 
     # ------------------------------------------------------------------
-    # SUBSCRIPTIONS (абонементы клиентов)
+    # SUBSCRIPTIONS
     # ------------------------------------------------------------------
     async def subscriptions_for_client(
         self, client_id: int, only_usable: bool = False, only_active: bool = False,
@@ -143,12 +141,86 @@ class BackendAPIClient:
             return response.status_code == 204
 
     # ------------------------------------------------------------------
-    # BOOKINGS (записи на занятия)
+    # GROUPS (для алгоритмики)
+    # ------------------------------------------------------------------
+    async def groups_list(self, service_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        params = {}
+        if service_id is not None:
+            params["service_id"] = service_id
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v1/groups",
+                params=params,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def group_get(self, group_id: str) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v1/groups/{group_id}"
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def group_create(
+        self, name: str, service_id: int,
+        max_participants: int = 8,
+        day_of_week: Optional[int] = None, time: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "name": name,
+            "service_id": service_id,
+            "max_participants": max_participants,
+        }
+        if day_of_week is not None:
+            payload["day_of_week"] = day_of_week
+        if time is not None:
+            payload["time"] = time
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/groups",
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def group_update(self, group_id: str, **kwargs) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.put(
+                f"{self.base_url}/api/v1/groups/{group_id}",
+                json=kwargs,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def group_delete(self, group_id: str) -> bool:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(
+                f"{self.base_url}/api/v1/groups/{group_id}"
+            )
+            return response.status_code == 204
+
+    async def group_add_participant(self, group_id: str, client_id: int) -> bool:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/groups/{group_id}/participants/{client_id}"
+            )
+            return response.status_code in (200, 201)
+
+    async def group_remove_participant(self, group_id: str, client_id: int) -> bool:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(
+                f"{self.base_url}/api/v1/groups/{group_id}/participants/{client_id}"
+            )
+            return response.status_code == 204
+
+    # ------------------------------------------------------------------
+    # BOOKINGS
     # ------------------------------------------------------------------
     async def bookings_for_date(
         self, date: str, specialist_id: Optional[int] = None, client_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Брони за один конкретный день."""
         params: Dict[str, Any] = {"date": date}
         if specialist_id is not None:
             params["specialist_id"] = specialist_id
@@ -166,7 +238,6 @@ class BackendAPIClient:
         self, start_date: str, end_date: str,
         specialist_id: Optional[int] = None, client_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Брони за диапазон дат (включительно)."""
         params: Dict[str, Any] = {"start_date": start_date, "end_date": end_date}
         if specialist_id is not None:
             params["specialist_id"] = specialist_id
@@ -189,11 +260,6 @@ class BackendAPIClient:
         co_specialist_ids: Optional[List[int]] = None,
         notes: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Создание брони. Возвращает созданный объект.
-        При ошибке валидации (409 weekly limit / time conflict, 400 invalid)
-        бросает httpx.HTTPStatusError — caller его обрабатывает и читает detail.
-        """
         payload: Dict[str, Any] = {
             "subscription_id": subscription_id,
             "start_time": start_time,
@@ -234,7 +300,7 @@ class BackendAPIClient:
             return response.json()
 
     # ------------------------------------------------------------------
-    # USERS (для админа/методиста)
+    # USERS
     # ------------------------------------------------------------------
     async def users_get_all(self, skip: int = 0, limit: int = 100) -> Dict[str, Any]:
         async with httpx.AsyncClient(timeout=30.0) as client:

@@ -1,11 +1,12 @@
 """
 Раздел "Абонементы" в боте.
 
-Возможности:
-- Список клиентов → абонементы конкретного клиента → выдача нового / отмена
-- Также используется в процессе создания записи: если у клиента нет
-  активного абонемента, мы запускаем mini-flow выдачи и возвращаем
-  пользователя обратно к выбору абонемента.
+Поддерживает выдачу 5 типов абонементов:
+- Индивидуальные (диагностика / 1 / 4 / 8 дней) — закрепляются за специалистом
+- Алгоритмика — групповой, требует выбора группы
+
+Используется и из главного меню расписания ("🎫 Абонементы"), и изнутри
+flow создания записи (если у клиента нет нужного абонемента).
 """
 import logging
 
@@ -30,20 +31,18 @@ class SubscriptionState(StatesGroup):
     select_client = State()
     client_subscriptions = State()
     issue_select_service = State()
+    issue_select_group = State()  # для алгоритмики — выбор группы
 
 
-# Маркер, как продолжить flow после выдачи: "create_record" — вернуться в schedule.create
-# или None — остаться в разделе абонементов.
 RETURN_KEY = "subscriptions_return_to"
 
 
 # =====================================================================
-# Главный экран "Абонементы" (callback из меню расписания)
+# Главный экран
 # =====================================================================
 
 @router.callback_query(F.data == "subscriptions_menu")
 async def subscriptions_menu(callback: CallbackQuery, state: FSMContext):
-    """Открывает раздел абонементов: показывает список клиентов."""
     await _show_clients_list(callback, state, return_to=None)
     await callback.answer()
 
@@ -135,12 +134,15 @@ async def _show_subs_for_client(callback: CallbackQuery, state: FSMContext):
             status = s.get("status", "")
             used = s.get("used_sessions", 0)
             total = s.get("total_sessions", 0)
-            spec = s.get("assigned_specialist_name") or "—"
+            spec = s.get("assigned_specialist_name") or ""
+            group = s.get("group_name") or ""
             status_emoji = {
                 "active": "🟢", "completed": "✅", "expired": "⏰", "cancelled": "⛔",
             }.get(status, "•")
             line = f"{status_emoji} {sname} — {used}/{total}"
-            if spec and spec != "—":
+            if group:
+                line += f" — 👥 {group}"
+            elif spec:
                 line += f" — {spec}"
             lines.append(line)
 
@@ -164,7 +166,7 @@ async def _show_subs_for_client(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "subs_issue_start")
 async def subs_issue_start(callback: CallbackQuery, state: FSMContext):
-    """Шаг 1 выдачи: выбираем услугу из справочника."""
+    """Шаг 1 выдачи: выбор услуги."""
     try:
         api = BackendAPIClient()
         services = await api.services_list()
@@ -173,12 +175,13 @@ async def subs_issue_start(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(f"Ошибка: {e}")
         return
 
-    # На этом этапе скрываем алгоритмику (групповая) — отложили
-    services = [s for s in services if not s.get("is_group")]
+    # Кэшируем для дальнейшего использования
+    await state.update_data(subs_services_cache=services)
 
     buttons = []
     for s in services:
-        label = f"{s['name']} ({s['max_sessions']} сесс.)"
+        emoji = "👥" if s.get("is_group") else "👤"
+        label = f"{emoji} {s['name']} ({s['max_sessions']} сесс.)"
         buttons.append([InlineKeyboardButton(
             text=label,
             callback_data=f"subs_issue_pick_{s['id']}",
@@ -198,7 +201,6 @@ async def subs_issue_cancel(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     return_to = user_data.get(RETURN_KEY)
     if return_to == "create_record":
-        # Возвращаемся к выбору абонемента в потоке создания записи
         from handlers.schedule import _show_subscriptions_for_create, ScheduleState
         await state.set_state(ScheduleState.create_select_subscription)
         await _show_subscriptions_for_create(callback, state)
@@ -209,8 +211,118 @@ async def subs_issue_cancel(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("subs_issue_pick_"), SubscriptionState.issue_select_service)
 async def subs_issue_pick(callback: CallbackQuery, state: FSMContext):
-    """Создаём абонемент: индивидуальный, специалист = текущий пользователь."""
+    """Шаг 2: если групповая — спрашиваем группу, иначе создаём сразу."""
     service_id = int(callback.data.rsplit("_", 1)[-1])
+    user_data = await state.get_data()
+    services = user_data.get("subs_services_cache") or []
+    service = next((s for s in services if s["id"] == service_id), None)
+    if not service:
+        await callback.answer("Услуга не найдена.", show_alert=True)
+        return
+
+    await state.update_data(subs_issue_service_id=service_id, subs_issue_service=service)
+
+    if service.get("is_group"):
+        # Алгоритмика — нужен выбор группы
+        await _show_groups_for_issue(callback, state)
+    else:
+        # Индивидуальный — создаём сразу
+        await _create_subscription_individual(callback, state, service_id)
+    await callback.answer()
+
+
+async def _show_groups_for_issue(callback: CallbackQuery, state: FSMContext):
+    user_data = await state.get_data()
+    service_id = user_data.get("subs_issue_service_id")
+    try:
+        api = BackendAPIClient()
+        groups = await api.groups_list(service_id=service_id)
+    except Exception as e:
+        logger.exception("groups_list error")
+        await callback.message.edit_text(f"Ошибка: {e}")
+        return
+
+    groups = [g for g in groups if not g.get("deleted_at") and g.get("is_active", True)]
+    groups.sort(key=lambda g: (g.get("name") or "").lower())
+
+    if not groups:
+        await callback.message.edit_text(
+            "Нет активных групп для этой услуги.\n"
+            "Сначала создайте группу в разделе «👥 Группы».",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="subs_issue_start")
+            ]]),
+        )
+        return
+
+    await state.update_data(subs_issue_groups_cache=groups)
+
+    buttons = []
+    for i, g in enumerate(groups):
+        active_count = sum(1 for p in (g.get("participants") or []) if p.get("is_active"))
+        max_part = g.get("max_participants", 8)
+        label = f"{g.get('name', '?')} ({active_count}/{max_part})"
+        if active_count >= max_part:
+            label = f"⚠️ {label} полная"
+        if len(label) > 50:
+            label = label[:47] + "…"
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"subs_issue_grp_{i}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="subs_issue_start")])
+
+    await callback.message.edit_text(
+        "Выберите группу для абонемента «Алгоритмика»:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await state.set_state(SubscriptionState.issue_select_group)
+
+
+@router.callback_query(F.data.startswith("subs_issue_grp_"), SubscriptionState.issue_select_group)
+async def subs_issue_grp_picked(callback: CallbackQuery, state: FSMContext):
+    idx = int(callback.data.rsplit("_", 1)[-1])
+    user_data = await state.get_data()
+    groups = user_data.get("subs_issue_groups_cache") or []
+    if idx >= len(groups):
+        await callback.answer("Группа не найдена.", show_alert=True)
+        return
+    group = groups[idx]
+    service_id = user_data.get("subs_issue_service_id")
+    client_id = user_data["subs_client_id"]
+
+    api = BackendAPIClient()
+    # Дополнительно: добавляем клиента в состав группы (если ещё не там)
+    try:
+        await api.group_add_participant(group["id"], client_id)
+    except Exception as e:
+        logger.warning(f"group_add_participant warn: {e}")
+
+    # Создаём абонемент
+    try:
+        sub = await api.subscription_create(
+            client_id=client_id,
+            service_id=service_id,
+            group_id=group["id"],
+        )
+    except httpx.HTTPStatusError as e:
+        detail = ""
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            pass
+        await callback.message.edit_text(f"Не удалось выдать абонемент:\n{detail or e}")
+        await callback.answer()
+        return
+    except Exception as e:
+        logger.exception("subscription_create error")
+        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.answer()
+        return
+
+    await _after_issue_success(callback, state, sub, group_name=group["name"])
+
+
+async def _create_subscription_individual(
+    callback: CallbackQuery, state: FSMContext, service_id: int,
+):
     user_data = await state.get_data()
     client_id = user_data["subs_client_id"]
     specialist_id = user_data.get("global_user_id")
@@ -229,29 +341,34 @@ async def subs_issue_pick(callback: CallbackQuery, state: FSMContext):
         except Exception:
             pass
         await callback.message.edit_text(f"Не удалось выдать абонемент:\n{detail or e}")
-        await callback.answer()
         return
     except Exception as e:
         logger.exception("subscription_create error")
         await callback.message.edit_text(f"Ошибка: {e}")
-        await callback.answer()
         return
 
+    await _after_issue_success(callback, state, sub)
+
+
+async def _after_issue_success(callback, state: FSMContext, sub: dict, group_name: str | None = None):
+    user_data = await state.get_data()
     service_name = sub.get("service_name") or "Абонемент"
     total = sub.get("total_sessions")
-    text = (
-        f"✅ Выдан абонемент:\n"
-        f"{service_name} ({total} сесс.)\n"
-        f"Клиент: {user_data.get('subs_client_name', '')}"
-    )
+
+    text_lines = [
+        f"✅ Выдан абонемент:",
+        f"{service_name} ({total} сесс.)",
+        f"Клиент: {user_data.get('subs_client_name', '')}",
+    ]
+    if group_name:
+        text_lines.append(f"Группа: {group_name}")
+    text = "\n".join(text_lines)
 
     return_to = user_data.get(RETURN_KEY)
     if return_to == "create_record":
-        # Идём дальше по flow создания записи: показать абонементы и продолжить
         await callback.message.edit_text(text)
         from handlers.schedule import _show_subscriptions_for_create, ScheduleState
         await state.set_state(ScheduleState.create_select_subscription)
-        # Перерисуем как новое сообщение, чтобы не потерять подтверждение выше
         new_msg = await callback.message.answer("…")
 
         class _C:
@@ -266,7 +383,6 @@ async def subs_issue_pick(callback: CallbackQuery, state: FSMContext):
                 InlineKeyboardButton(text="⬅️ К абонементам клиента", callback_data="subs_back_client")
             ]]),
         )
-    await callback.answer("Готово")
 
 
 @router.callback_query(F.data == "subs_back_client")
@@ -276,7 +392,7 @@ async def subs_back_client(callback: CallbackQuery, state: FSMContext):
 
 
 # =====================================================================
-# Внешний API для schedule.py — запуск мини-flow выдачи изнутри создания
+# Внешний API для schedule.py
 # =====================================================================
 
 async def start_issue_flow_inline(
@@ -287,10 +403,6 @@ async def start_issue_flow_inline(
     client_name: str,
     return_to: str = "create_record",
 ) -> None:
-    """
-    Запускает мини-flow выдачи абонемента посреди flow создания записи.
-    После выдачи (или отмены) пользователь вернётся к выбору абонемента.
-    """
     await state.update_data(
         subs_client_id=client_id,
         subs_client_name=client_name,

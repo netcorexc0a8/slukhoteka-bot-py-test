@@ -3,7 +3,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from config import settings
 from handlers import (
-    auth, menu, schedule, subscriptions,
+    auth, menu, schedule, subscriptions, groups, group_session,
     users, statistics, export, export_ics, sync, backup,
 )
 from services.api_client import BackendAPIClient
@@ -19,7 +19,6 @@ bot = Bot(
 )
 dp = Dispatcher()
 
-# Авторизация: middleware
 dp.message.middleware(AuthMiddleware())
 
 api_client = BackendAPIClient()
@@ -32,9 +31,12 @@ dp.include_router(export.router)
 dp.include_router(export_ics.router)
 dp.include_router(sync.router)
 dp.include_router(backup.router)
-# Subscriptions ДО schedule, потому что обрабатывает callback'и subs_*
-# которые используются в т.ч. внутри потока создания записи в schedule.
+# Subscriptions, groups, group_session ДО schedule:
+# в schedule живёт общий calendar_callback, который переадресует
+# нужные case'ы по строковому имени состояния.
 dp.include_router(subscriptions.router)
+dp.include_router(groups.router)
+dp.include_router(group_session.router)
 dp.include_router(schedule.router)
 
 dp["api_client"] = api_client

@@ -1,19 +1,13 @@
 """
 Управление расписанием и записями (bookings).
 
-Поток создания записи:
-  главное меню → "📅 Расписание"
-    → "➕ Создать запись"
-      → выбор клиента (или создать нового)
-      → выбор активного абонемента клиента (или выдать новый)
-      → выбор даты
-      → выбор времени
-      → запись создаётся
-
-Просмотр расписания: календарь → список броней на дату с прогрессом 3/8.
-Удаление: выбор брони из списка → подтверждение.
-
-Менеджмент абонементов вынесен в handlers/subscriptions.py.
+Главное меню расписания:
+  📋 Посмотреть расписание
+  ➕ Создать запись           — индивидуальная (handlers/schedule.py)
+  👥 Создать групповое занятие — алгоритмика (handlers/group_session.py)
+  🗑️ Удалить запись
+  🎫 Абонементы               — handlers/subscriptions.py
+  👥 Группы                   — handlers/groups.py
 """
 import logging
 from datetime import datetime, timedelta
@@ -50,7 +44,6 @@ def _format_date_human(date_str: str) -> str:
 
 
 def _service_short_label(service_type: str) -> str:
-    """Короткий лейбл услуги для показа в кнопках."""
     return {
         "diagnostics": "Диагностика",
         "subscription_1": "Абонемент 1",
@@ -61,7 +54,6 @@ def _service_short_label(service_type: str) -> str:
 
 
 async def _busy_dates_for_month(year: int, month: int, specialist_id=None) -> list:
-    """Даты, на которые есть брони у этого специалиста (для подсветки в календаре)."""
     try:
         api = BackendAPIClient()
         first_day = datetime(year, month, 1)
@@ -69,17 +61,12 @@ async def _busy_dates_for_month(year: int, month: int, specialist_id=None) -> li
             last_day = datetime(year + 1, 1, 1)
         else:
             last_day = datetime(year, month + 1, 1)
-
         bookings = await api.bookings_for_range(
             start_date=first_day.strftime("%Y-%m-%d"),
             end_date=(last_day - timedelta(days=1)).strftime("%Y-%m-%d"),
             specialist_id=specialist_id,
         )
-        seen = set()
-        for b in bookings:
-            d = b["start_time"][:10]
-            seen.add(d)
-        return list(seen)
+        return list({b["start_time"][:10] for b in bookings})
     except Exception as e:
         logger.error(f"_busy_dates_for_month error: {e}")
         return []
@@ -88,7 +75,6 @@ async def _busy_dates_for_month(year: int, month: int, specialist_id=None) -> li
 async def _show_calendar(
     callback: CallbackQuery, state: FSMContext, prompt: str, year: int, month: int
 ):
-    """Утилита: показать календарь с подсвеченными busy-датами."""
     user_data = await state.get_data()
     specialist_id = user_data.get("global_user_id")
     role = user_data.get("role", "specialist")
@@ -106,11 +92,9 @@ async def _show_calendar(
 class ScheduleState(StatesGroup):
     main = State()
 
-    # Просмотр
     view_select_date = State()
     viewing = State()
 
-    # Создание
     create_select_client = State()
     create_new_client_name = State()
     create_new_client_phone = State()
@@ -118,7 +102,6 @@ class ScheduleState(StatesGroup):
     create_select_date = State()
     create_select_time = State()
 
-    # Удаление
     delete_select_date = State()
     delete_select_booking = State()
     delete_confirm = State()
@@ -132,9 +115,11 @@ class ScheduleState(StatesGroup):
 async def cmd_schedule(message: Message, state: FSMContext):
     buttons = [
         [InlineKeyboardButton(text="📋 Посмотреть расписание", callback_data="schedule_view")],
-        [InlineKeyboardButton(text="➕ Создать запись", callback_data="schedule_create")],
+        [InlineKeyboardButton(text="➕ Создать занятие", callback_data="schedule_create")],
+        [InlineKeyboardButton(text="➕ Создать групповое занятие", callback_data="schedule_create_group")],
         [InlineKeyboardButton(text="🗑️ Удалить запись", callback_data="schedule_delete")],
         [InlineKeyboardButton(text="🎫 Абонементы", callback_data="subscriptions_menu")],
+        [InlineKeyboardButton(text="👥 Группы", callback_data="groups_menu")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="schedule_back")],
     ]
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -188,15 +173,25 @@ async def schedule_view_date(callback: CallbackQuery, state: FSMContext, date_st
             await state.set_state(ScheduleState.viewing)
             return
 
-        lines = [title, ""]
+        # Группируем брони по start_time + group_id, чтобы групповые занятия
+        # отображались одной строкой "10:00 — Группа Среда (3 чел.)"
+        groups_buckets = {}
+        individuals = []
         for b in bookings:
+            if b.get("booking_type") == "group" and b.get("group_id"):
+                key = (b["start_time"], b["group_id"])
+                groups_buckets.setdefault(key, []).append(b)
+            else:
+                individuals.append(b)
+
+        lines = [title, ""]
+
+        # Сначала индивидуальные
+        for b in individuals:
             time_str = b["start_time"][11:16]
             client_name = b.get("client_name") or "—"
             spec_name = b.get("specialist_name") or ""
-            service = _service_short_label(b.get("service_name") or "")  # name тут полное "Абонемент на 4 дня"
-            # Если service_name из API уже человекочитаемый — используем как есть,
-            # service_short_label сработает только если там пришёл код типа.
-            service = b.get("service_name") or service
+            service = b.get("service_name") or ""
             session_info = ""
             if b.get("subscription_total"):
                 session_info = f" [{b.get('subscription_used') or 0}/{b['subscription_total']}]"
@@ -208,11 +203,22 @@ async def schedule_view_date(callback: CallbackQuery, state: FSMContext, date_st
                 line += f" — {service}{session_info}"
             lines.append(line)
 
-        text = "\n".join(lines)
+        # Затем групповые
+        for (start_time, _gid), items in groups_buckets.items():
+            time_str = start_time[11:16]
+            sample = items[0]
+            group_name = sample.get("group_name") or "Группа"
+            count = len(items)
+            spec_name = sample.get("specialist_name") or ""
+            line = f"• {time_str} — 👥 {group_name} ({count} чел.)"
+            if role != "specialist" and spec_name:
+                line += f" — вёл {spec_name}"
+            lines.append(line)
+
         keyboard = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="⬅️ Назад", callback_data="schedule_view")
         ]])
-        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.message.edit_text("\n".join(lines), reply_markup=keyboard)
         await state.set_state(ScheduleState.viewing)
 
     except Exception as e:
@@ -226,13 +232,11 @@ async def schedule_view_date(callback: CallbackQuery, state: FSMContext, date_st
 
 
 # =====================================================================
-# СОЗДАНИЕ ЗАПИСИ
-# Шаг 1: выбор клиента
+# СОЗДАНИЕ ИНДИВИДУАЛЬНОЙ ЗАПИСИ
 # =====================================================================
 
 @router.callback_query(F.data == "schedule_create")
 async def schedule_create_start(callback: CallbackQuery, state: FSMContext):
-    """Шаг 1 — выбор клиента."""
     user_data = await state.get_data()
     specialist_id = user_data.get("global_user_id")
 
@@ -248,12 +252,10 @@ async def schedule_create_start(callback: CallbackQuery, state: FSMContext):
     clients = [c for c in clients if not c.get("deleted_at")]
     clients.sort(key=lambda c: (c.get("name") or "").lower())
 
-    # Сохраняем список — потом по индексу из callback восстановим выбранного
     await state.update_data(create_clients_cache=clients)
 
     buttons = []
     for i, c in enumerate(clients):
-        # Ограничиваем длину текста кнопки
         label = c.get("name", "Без имени")
         if len(label) > 50:
             label = label[:47] + "…"
@@ -273,7 +275,6 @@ async def schedule_create_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "sched_back_to_main", ScheduleState.create_select_client)
 @router.callback_query(F.data == "sched_back_to_main")
 async def sched_back_to_main(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
@@ -298,7 +299,6 @@ async def schedule_create_client_picked(callback: CallbackQuery, state: FSMConte
     await callback.answer()
 
 
-# Создание нового клиента
 @router.callback_query(F.data == "sched_create_new_client", ScheduleState.create_select_client)
 async def schedule_create_new_client(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
@@ -333,7 +333,6 @@ async def schedule_create_new_client_phone(message: Message, state: FSMContext):
     specialist_id = user_data.get("global_user_id")
 
     if phone_raw == "-" or not phone_raw:
-        # Генерим уникальный «нет-телефона» ключ
         phone = f"manual:{specialist_id}:{int(datetime.now().timestamp())}"
     else:
         phone = phone_raw
@@ -360,25 +359,15 @@ async def schedule_create_new_client_phone(message: Message, state: FSMContext):
     )
     await message.answer(f"✅ Клиент «{client['name']}» добавлен.")
 
-    # Дальше — на выбор абонемента
-    # Эмулируем callback-сообщение, чтобы переиспользовать helper
     fake_msg = await message.answer("…")
     fake_cb = _FakeCallback(message=fake_msg)
     await _show_subscriptions_for_create(fake_cb, state)
 
 
-# =====================================================================
-# Шаг 2: выбор абонемента (или выдать новый)
-# =====================================================================
-
 class _FakeCallback:
-    """
-    Лёгкая обёртка вокруг Message, чтобы переиспользовать helper-ы,
-    написанные под callback.message.edit_text. Используется только когда
-    мы пришли через message-handler и нет реального callback'а.
-    """
     def __init__(self, message: Message):
         self.message = message
+
     async def answer(self, *args, **kwargs):
         return None
 
@@ -392,10 +381,9 @@ async def _show_subscriptions_for_create(callback, state: FSMContext):
     try:
         api = BackendAPIClient()
         subs = await api.subscriptions_for_client(client_id=client_id, only_usable=True)
-        # На этом шаге показываем только индивидуальные (групповые = алгоритмика, отложили)
+        # На индивидуальном flow показываем только индивидуальные (без group_id)
         subs = [s for s in subs if s.get("group_id") is None]
-        # Дополнительно фильтруем: специалист закреплён за этим абонементом
-        # (или абонемент не закреплён ни за кем — на всякий случай)
+        # Специалист — только свои; admin/methodist видят всё
         subs = [s for s in subs
                 if s.get("assigned_specialist_id") in (None, specialist_id)
                 or user_data.get("role") in ("admin", "methodist")]
@@ -424,9 +412,9 @@ async def _show_subscriptions_for_create(callback, state: FSMContext):
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     if subs:
-        text = f"Активные абонементы клиента «{client_name}»:"
+        text = f"Активные индивидуальные абонементы клиента «{client_name}»:"
     else:
-        text = f"У клиента «{client_name}» нет активных абонементов.\nВыдать новый?"
+        text = f"У клиента «{client_name}» нет активных индивидуальных абонементов.\nВыдать новый?"
 
     await callback.message.edit_text(text, reply_markup=keyboard)
     await state.set_state(ScheduleState.create_select_subscription)
@@ -444,10 +432,8 @@ async def schedule_create_sub_picked(callback: CallbackQuery, state: FSMContext)
     await callback.answer()
 
 
-# Выдача нового абонемента в процессе создания записи: переадресуем в раздел subscriptions
 @router.callback_query(F.data == "sched_create_issue_sub", ScheduleState.create_select_subscription)
 async def schedule_create_issue_sub(callback: CallbackQuery, state: FSMContext):
-    """Запускаем мини-flow выдачи абонемента — управление в subscriptions.py."""
     from handlers.subscriptions import start_issue_flow_inline
     user_data = await state.get_data()
     await start_issue_flow_inline(
@@ -455,15 +441,10 @@ async def schedule_create_issue_sub(callback: CallbackQuery, state: FSMContext):
         state,
         client_id=user_data["create_client_id"],
         client_name=user_data.get("create_client_name", ""),
-        return_to="create_record",  # маркер: после выдачи вернуться к выбору абонемента
+        return_to="create_record",
     )
     await callback.answer()
 
-
-# =====================================================================
-# Шаг 3: выбор даты (через календарь — обработка ниже в calendar_callback)
-# Шаг 4: выбор времени
-# =====================================================================
 
 async def _show_time_slots(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
@@ -539,13 +520,11 @@ async def schedule_create_time_picked(callback: CallbackQuery, state: FSMContext
             end_time=end_time,
         )
     except httpx.HTTPStatusError as e:
-        # Backend нам прислал понятный detail — показываем
         detail = ""
         try:
             detail = e.response.json().get("detail", "")
         except Exception:
             pass
-        # Чаще всего — 409: weekly limit / time conflict
         text = f"Не удалось создать запись:\n{detail or e}"
         await callback.message.edit_text(
             text,
@@ -622,10 +601,12 @@ async def schedule_delete_select_booking(callback: CallbackQuery, state: FSMCont
     buttons = []
     for b in bookings:
         time_str = b["start_time"][11:16]
-        client = b.get("client_name") or "—"
-        label = f"{time_str} — {client}"
-        if len(label) > 50:
-            label = label[:47] + "…"
+        if b.get("booking_type") == "group" and b.get("group_name"):
+            label = f"{time_str} — 👥 {b['group_name']} · {b.get('client_name', '?')}"
+        else:
+            label = f"{time_str} — {b.get('client_name', '—')}"
+        if len(label) > 60:
+            label = label[:57] + "…"
         buttons.append([InlineKeyboardButton(
             text=label,
             callback_data=f"sched_del_pick_{b['id']}",
@@ -683,6 +664,10 @@ async def schedule_delete_confirm(callback: CallbackQuery, state: FSMContext):
 
 # =====================================================================
 # Календарь — общий обработчик calendar_*
+#
+# Расширен для поддержки потока group_session: если активный state —
+# GroupSessionState.select_date, обрабатываем как выбор даты для группового
+# занятия.
 # =====================================================================
 
 @router.callback_query(F.data.startswith("calendar_"))
@@ -693,13 +678,31 @@ async def calendar_callback(callback: CallbackQuery, state: FSMContext):
 
     if action == "day":
         date_str = f"{parts[2]}-{parts[3]}-{parts[4]}"
+
+        # Расписание (свои состояния)
         if current_state == ScheduleState.view_select_date.state:
             await schedule_view_date(callback, state, date_str)
-        elif current_state == ScheduleState.create_select_date.state:
+            await callback.answer()
+            return
+        if current_state == ScheduleState.create_select_date.state:
             await state.update_data(create_date=date_str)
             await _show_time_slots(callback, state)
-        elif current_state == ScheduleState.delete_select_date.state:
+            await callback.answer()
+            return
+        if current_state == ScheduleState.delete_select_date.state:
             await schedule_delete_select_booking(callback, state, date_str)
+            await callback.answer()
+            return
+
+        # Group-session flow: проверяем по строковому имени состояния, чтобы
+        # не тащить кросс-импорт
+        if current_state and "GroupSessionState" in current_state and "select_date" in current_state:
+            await state.update_data(gs_date=date_str)
+            from handlers.group_session import gs_show_time_slots
+            await gs_show_time_slots(callback, state)
+            await callback.answer()
+            return
+
         await callback.answer()
         return
 
