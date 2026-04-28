@@ -268,7 +268,6 @@ class BackendAPIClient:
         specialist_id: Optional[int] = None,
         co_specialist_ids: Optional[List[int]] = None,
         notes: Optional[str] = None,
-        booking_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "subscription_id": subscription_id,
@@ -281,8 +280,6 @@ class BackendAPIClient:
             payload["co_specialist_ids"] = co_specialist_ids
         if notes:
             payload["notes"] = notes
-        if booking_type is not None:
-            payload["booking_type"] = booking_type
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{self.base_url}/api/v1/bookings",
@@ -307,6 +304,58 @@ class BackendAPIClient:
             response = await client.put(
                 f"{self.base_url}/api/v1/bookings/{booking_id}",
                 json=kwargs,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def booking_create_recurring(
+            self,
+            subscription_id: int,
+            first_start_time: str,
+            duration_minutes: int = 60,
+            specialist_id: Optional[int] = None,
+            co_specialist_ids: Optional[List[int]] = None,
+            notes: Optional[str] = None,
+        ) -> Dict[str, Any]:
+            """Создаёт серию броней — по 1 в неделю до конца абонемента."""
+            payload: Dict[str, Any] = {
+                "subscription_id": subscription_id,
+                "first_start_time": first_start_time,
+                "duration_minutes": duration_minutes,
+            }
+            if specialist_id is not None:
+                payload["specialist_id"] = specialist_id
+            if co_specialist_ids:
+                payload["co_specialist_ids"] = co_specialist_ids
+            if notes:
+                payload["notes"] = notes
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/api/v1/bookings/recurring",
+                    json=payload,
+                )
+                response.raise_for_status()
+                return response.json()
+
+    async def booking_group_move(
+        self,
+        group_id: str,
+        old_start: str,
+        new_start: str,
+        duration_minutes: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Переносит всё групповое занятие на новое время."""
+        payload: Dict[str, Any] = {
+            "group_id": group_id,
+            "old_start": old_start,
+            "new_start": new_start,
+        }
+        if duration_minutes is not None:
+            payload["duration_minutes"] = duration_minutes
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/bookings/group/move",
+                json=payload,
             )
             response.raise_for_status()
             return response.json()

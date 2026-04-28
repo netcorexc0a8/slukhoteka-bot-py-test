@@ -153,9 +153,15 @@ async def _show_subs_for_client(callback: CallbackQuery, state: FSMContext):
     buttons = []
     for s in subs:
         if s.get("status") == "active":
-            label = f"❌ Отменить {s.get('service_name', '')[:20]}..."
+            remaining = s.get("remaining_sessions", 0)
+            total = s.get("total_sessions", 0)
+            purchased = (s.get("purchased_at") or "")[:10]  # YYYY-MM-DD
+            sname = s.get("service_name") or s.get("service_type") or ""
+            if len(sname) > 20:
+                sname = sname[:20] + "…"
+            label = f"❌ {sname} {remaining}/{total} от {purchased}"
             buttons.append([InlineKeyboardButton(
-                text=label,
+                text=label[:64],
                 callback_data=f"subs_cancel_{s['id']}",
             )])
     buttons.append([InlineKeyboardButton(text="🎫 Выдать новый абонемент", callback_data="subs_issue_start")])
@@ -403,8 +409,9 @@ async def subs_cancel_start(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="⬅️ Отмена", callback_data="subs_back_client")],
     ])
     await callback.message.edit_text(
-        "Отменить абонемент? Это действие нельзя отменить.\n"
-        "Активные записи (если есть) останутся, но абонемент будет помечен как отменённый.",
+        "Отменить абонемент?\n\n"
+        "Все будущие записи по этому абонементу также будут отменены.\n"
+        "Прошедшие занятия останутся в истории.",
         reply_markup=keyboard,
     )
     await callback.answer()

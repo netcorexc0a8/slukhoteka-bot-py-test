@@ -6,24 +6,25 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 from sqlalchemy.orm import Session
 
-from app.models.booking import Booking, BookingStatus
+from app.models.booking import Booking, BookingStatus, BookingType
 from app.models.user import GlobalUser, PlatformUser
 
 
-# Маппинг типа абонемента в человекочитаемое имя для экспорта
 def _service_label(booking: Booking) -> str:
     if booking.service is None:
         return ""
     return booking.service.name
 
 
-class ExcelExportService:
-    """
-    Экспорт расписания в Excel.
+def _booking_type_label(booking: Booking) -> str:
+    bt = booking.booking_type
+    if bt == BookingType.GROUP or (isinstance(bt, str) and bt == "group"):
+        return "Групповое"
+    return "Индивидуальное"
 
-    Один лист — общее расписание, плюс по листу на специалиста, плюс листы
-    со статистикой. Принимает список Booking (заменяет старый Schedule).
-    """
+
+class ExcelExportService:
+    """Экспорт расписания в Excel."""
 
     def _merge_same_cells(self, ws, start_row, end_row, column_idx, alignment):
         current_value = None
@@ -58,7 +59,9 @@ class ExcelExportService:
     def _write_sheet(self, ws, bookings: List[Booking], db: Session):
         headers = [
             "Дата записи", "День недели", "Время записи",
-            "Клиент", "Специалист", "Абонемент", "Сессия",
+            "Клиент", "Специалист", "Со-ведущие",
+            "Тип занятия", "Группа",
+            "Абонемент", "Сессия",
             "Статус", "Платформа записи", "Дата создания", "Дата обновления",
         ]
         for col, header in enumerate(headers, 1):
@@ -81,17 +84,29 @@ class ExcelExportService:
             if b.session_number and b.subscription:
                 session_label = f"{b.session_number}/{b.subscription.total_sessions}"
 
+            co_specialists = list(b.co_specialists or [])
+            co_names = [
+                (cs.name or cs.phone or "") for cs in co_specialists
+                if cs.id != b.specialist_id
+            ]
+            co_label = ", ".join(n for n in co_names if n)
+
+            group_name = b.group.name if b.group else ""
+
             ws.cell(row=row, column=1, value=b.start_time.strftime("%d.%m.%Y"))
             ws.cell(row=row, column=2, value=days_of_week[b.start_time.weekday()])
             ws.cell(row=row, column=3, value=b.start_time.strftime("%H:%M"))
             ws.cell(row=row, column=4, value=client_name)
             ws.cell(row=row, column=5, value=specialist_name)
-            ws.cell(row=row, column=6, value=_service_label(b))
-            ws.cell(row=row, column=7, value=session_label)
-            ws.cell(row=row, column=8, value=b.status.value if b.status else "")
-            ws.cell(row=row, column=9, value=self._get_platform_by_specialist(db, b.specialist_id))
-            ws.cell(row=row, column=10, value=b.created_at.strftime("%d.%m.%Y %H:%M"))
-            ws.cell(row=row, column=11, value=b.updated_at.strftime("%d.%m.%Y %H:%M"))
+            ws.cell(row=row, column=6, value=co_label)
+            ws.cell(row=row, column=7, value=_booking_type_label(b))
+            ws.cell(row=row, column=8, value=group_name)
+            ws.cell(row=row, column=9, value=_service_label(b))
+            ws.cell(row=row, column=10, value=session_label)
+            ws.cell(row=row, column=11, value=b.status.value if b.status else "")
+            ws.cell(row=row, column=12, value=self._get_platform_by_specialist(db, b.specialist_id))
+            ws.cell(row=row, column=13, value=b.created_at.strftime("%d.%m.%Y %H:%M"))
+            ws.cell(row=row, column=14, value=b.updated_at.strftime("%d.%m.%Y %H:%M"))
 
         if bookings:
             end_row = len(bookings) + 1
@@ -126,8 +141,6 @@ class ExcelExportService:
         current_user: GlobalUser,
         db: Session,
     ) -> bytes:
-        """Главный метод. Имя сохранили — UI продолжает звать его так же."""
-        # Не экспортируем удалённые брони
         bookings = [b for b in bookings if b.deleted_at is None]
 
         wb = Workbook()
@@ -137,14 +150,13 @@ class ExcelExportService:
 
         self._add_statistics_sheets(wb, bookings, db)
 
-        # По листу на специалиста
         per_specialist = defaultdict(list)
         for b in bookings:
             if b.specialist:
                 name = b.specialist.name or b.specialist.phone
                 per_specialist[name].append(b)
         for name, items in per_specialist.items():
-            ws_spec = wb.create_sheet(name[:31])  # ограничение Excel — 31 символ
+            ws_spec = wb.create_sheet(name[:31])
             self._write_sheet(ws_spec, items, db)
 
         output = BytesIO()
@@ -176,7 +188,6 @@ class ExcelExportService:
 
         ws_combined = wb.create_sheet("Статистика по дням-неделям")
 
-        # Daily table (left)
         daily_dates = sorted({d for ud in daily_by_user.values() for d in ud.keys()})
         if daily_dates:
             ws_combined.cell(row=1, column=1, value="Дата").font = Font(bold=True)
@@ -184,7 +195,6 @@ class ExcelExportService:
                 ws_combined.cell(row=1, column=col, value=name).font = Font(bold=True)
             total_col = len(user_names) + 2
             ws_combined.cell(row=1, column=total_col, value="Всего занятий").font = Font(bold=True)
-
             for row, date_str in enumerate(daily_dates, 2):
                 ws_combined.cell(row=row, column=1, value=date_str)
                 daily_total = 0
@@ -194,7 +204,6 @@ class ExcelExportService:
                     daily_total += cnt
                 ws_combined.cell(row=row, column=total_col, value=daily_total)
 
-        # Weekly table (right)
         weekly_weeks = sorted({w for uw in weekly_by_user.values() for w in uw.keys()})
         if weekly_weeks:
             start_col = len(user_names) + 5

@@ -437,7 +437,6 @@ async def gs_create(callback: CallbackQuery, state: FSMContext):
             end_time=end_time,
             specialist_id=me_id,
             co_specialist_ids=co_specialist_ids,
-            booking_type="group",
         )
         tasks.append(task)
         task_clients.append(e["client_name"])

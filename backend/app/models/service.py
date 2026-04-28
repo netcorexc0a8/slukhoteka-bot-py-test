@@ -11,28 +11,22 @@ class ServiceType(str, enum.Enum):
     SUBSCRIPTION_4 = "subscription_4"
     SUBSCRIPTION_8 = "subscription_8"
     LOGORHYTHMICS = "logorhythmics"
+    READING = "reading"
 
 
 class Service(Base):
-    """
-    Справочник услуг (типов абонементов).
-    Засеивается миграцией 003 пятью записями.
-    """
     __tablename__ = "services"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
-    # values_callable — маппим через .value (нижний регистр), а не через имена членов
     service_type = Column(
         SAEnum(
             ServiceType,
             name="service_type_enum",
             values_callable=lambda x: [e.value for e in x],
         ),
-        nullable=False,
-        index=True,
-        unique=True,
+        nullable=False, index=True, unique=True,
     )
     max_sessions = Column(Integer, nullable=False)
     max_participants = Column(Integer, nullable=True)

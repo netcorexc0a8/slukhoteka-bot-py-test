@@ -5,8 +5,9 @@ from typing import Optional, List
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.client_subscription import ClientSubscription, SubscriptionStatus
-from app.models.service import Service, ServiceType
+from app.models.service import Service
 from app.models.client import Client
+from app.models.booking import Booking, BookingStatus
 from app.schemas.client_subscription import ClientSubscriptionCreate, ClientSubscriptionUpdate
 from app.services.exceptions import InvalidSubscriptionConfig
 
@@ -31,10 +32,6 @@ def get_subscriptions_by_client(
     only_active: bool = False,
     only_usable: bool = False,
 ) -> List[ClientSubscription]:
-    """
-    only_active: статус ACTIVE.
-    only_usable: ACTIVE + есть оставшиеся сессии (для UI выбора абонемента при бронировании).
-    """
     query = (
         db.query(ClientSubscription)
         .options(
@@ -57,7 +54,6 @@ def get_subscriptions_by_client(
 
 
 def create_subscription(db: Session, payload: ClientSubscriptionCreate) -> ClientSubscription:
-    """Выдача абонемента клиенту."""
     service = db.query(Service).filter(Service.id == payload.service_id).first()
     if service is None:
         raise InvalidSubscriptionConfig("Услуга не найдена")
@@ -67,11 +63,10 @@ def create_subscription(db: Session, payload: ClientSubscriptionCreate) -> Clien
     if client is None:
         raise InvalidSubscriptionConfig("Клиент не найден")
 
-    # Валидация по типу услуги
     if service.is_group:
         if not payload.group_id:
             raise InvalidSubscriptionConfig(
-                "Для группового абонемента (алгоритмика) нужно указать group_id"
+                "Для группового абонемента нужно указать group_id"
             )
         assigned_specialist_id = None
     else:
@@ -98,6 +93,28 @@ def create_subscription(db: Session, payload: ClientSubscriptionCreate) -> Clien
     return sub
 
 
+def _cancel_future_bookings(db: Session, subscription: ClientSubscription) -> int:
+    """
+    Отменяет (status=CANCELLED) все будущие активные брони абонемента.
+    Сессии в счётчик не возвращаются — абонемент сам отменён.
+    """
+    now = datetime.now(timezone.utc)
+    future = (
+        db.query(Booking)
+        .filter(
+            Booking.subscription_id == subscription.id,
+            Booking.deleted_at.is_(None),
+            Booking.status == BookingStatus.SCHEDULED,
+            Booking.start_time > now,
+        )
+        .all()
+    )
+    for b in future:
+        b.status = BookingStatus.CANCELLED
+        b.cancelled_at = now
+    return len(future)
+
+
 def update_subscription(
     db: Session, subscription_id: int, payload: ClientSubscriptionUpdate
 ) -> Optional[ClientSubscription]:
@@ -105,19 +122,30 @@ def update_subscription(
     if not sub:
         return None
     data = payload.model_dump(exclude_unset=True)
+
+    new_status = data.get("status")
+    becoming_cancelled = (
+        new_status == SubscriptionStatus.CANCELLED
+        and sub.status != SubscriptionStatus.CANCELLED
+    )
+
     for field, value in data.items():
         setattr(sub, field, value)
+
+    if becoming_cancelled:
+        _cancel_future_bookings(db, sub)
+
     db.commit()
     db.refresh(sub)
     return sub
 
 
 def delete_subscription(db: Session, subscription_id: int) -> bool:
-    """Soft-delete. Записи (bookings) при этом продолжают существовать (FK SET NULL)."""
     sub = get_subscription_by_id(db, subscription_id)
     if not sub:
         return False
     sub.deleted_at = datetime.now(timezone.utc)
     sub.status = SubscriptionStatus.CANCELLED
+    _cancel_future_bookings(db, sub)
     db.commit()
     return True
