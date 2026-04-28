@@ -16,6 +16,7 @@
     группе — бот покажет это в списке отметки и не даст пометить участника.
   - Weekly limit (раз в неделю) — backend проверит при создании.
 """
+import asyncio
 import logging
 from datetime import datetime, timedelta
 
@@ -131,9 +132,8 @@ async def gs_show_time_slots(callback: CallbackQuery, state: FSMContext):
     specialist_id = user_data.get("global_user_id")
 
     try:
-        api = BackendAPIClient()
-        bookings = await api.bookings_for_date(date=date_str, specialist_id=specialist_id)
-        busy = {b["start_time"][11:16] for b in bookings if not b.get("deleted_at")}
+        # For group sessions, don't check specialist availability as it should allow multiple concurrent group bookings
+        busy = set()
 
         slots = []
         for hour in range(settings.START_HOUR, settings.END_HOUR + 1):
@@ -423,31 +423,42 @@ async def gs_create(callback: CallbackQuery, state: FSMContext):
     failed = []  # [(client_name, error_text)]
 
     # Создаём по одной брони на каждого выбранного клиента
+    tasks = []
+    task_clients = []
     for e in enriched:
         if e["client_id"] not in selected:
             continue
         if e["subscription_id"] is None:
             failed.append((e["client_name"], "нет абонемента"))
             continue
-        try:
-            await api.booking_create(
-                subscription_id=e["subscription_id"],
-                start_time=start_time,
-                end_time=end_time,
-                specialist_id=me_id,
-                co_specialist_ids=co_specialist_ids,
-            )
-            created.append(e["client_name"])
-        except httpx.HTTPStatusError as exc:
-            detail = ""
-            try:
-                detail = exc.response.json().get("detail", "")
-            except Exception:
-                pass
-            failed.append((e["client_name"], detail or str(exc)))
-        except Exception as exc:
-            logger.exception("booking_create (group) error")
-            failed.append((e["client_name"], str(exc)))
+        task = api.booking_create(
+            subscription_id=e["subscription_id"],
+            start_time=start_time,
+            end_time=end_time,
+            specialist_id=me_id,
+            co_specialist_ids=co_specialist_ids,
+            booking_type="group",
+        )
+        tasks.append(task)
+        task_clients.append(e["client_name"])
+
+    # Execute all bookings concurrently
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for name, result in zip(task_clients, results):
+        if isinstance(result, Exception):
+            if isinstance(result, httpx.HTTPStatusError):
+                detail = ""
+                try:
+                    detail = result.response.json().get("detail", "")
+                except Exception:
+                    pass
+                failed.append((name, detail or str(result)))
+            else:
+                logger.exception("booking_create (group) error")
+                failed.append((name, str(result)))
+        else:
+            created.append(name)
 
     lines = [
         "✅ Занятие создано." if created else "⚠️ Ничего не создано.",

@@ -210,7 +210,7 @@ async def schedule_view_date(callback: CallbackQuery, state: FSMContext, date_st
             group_name = sample.get("group_name") or "Группа"
             count = len(items)
             spec_name = sample.get("specialist_name") or ""
-            line = f"• {time_str} — 👥 {group_name} ({count} чел.)"
+            line = f"• {time_str} — {group_name} ({count} чел.)"
             if role != "specialist" and spec_name:
                 line += f" — вёл {spec_name}"
             lines.append(line)

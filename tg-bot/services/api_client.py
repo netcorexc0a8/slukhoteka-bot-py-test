@@ -268,6 +268,7 @@ class BackendAPIClient:
         specialist_id: Optional[int] = None,
         co_specialist_ids: Optional[List[int]] = None,
         notes: Optional[str] = None,
+        booking_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "subscription_id": subscription_id,
@@ -280,6 +281,8 @@ class BackendAPIClient:
             payload["co_specialist_ids"] = co_specialist_ids
         if notes:
             payload["notes"] = notes
+        if booking_type is not None:
+            payload["booking_type"] = booking_type
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{self.base_url}/api/v1/bookings",
