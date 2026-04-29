@@ -195,7 +195,7 @@ async def subs_issue_start(callback: CallbackQuery, state: FSMContext):
     buttons = []
     for s in services:
         emoji = "👥" if s.get("is_group") else "👤"
-        label = f"{emoji} {s['name']} ({s['max_sessions']} сесс.)"
+        label = f"{emoji} {s['name']} ({s['max_sessions']} зан.)"
         buttons.append([InlineKeyboardButton(
             text=label,
             callback_data=f"subs_issue_pick_{s['id']}",
@@ -371,7 +371,7 @@ async def _after_issue_success(callback, state: FSMContext, sub: dict, group_nam
 
     text_lines = [
         f"✅ Выдан абонемент:",
-        f"{service_name} ({total} сесс.)",
+        f"{service_name} ({total} зан.)",
         f"Клиент: {user_data.get('subs_client_name', '')}",
     ]
     if group_name:

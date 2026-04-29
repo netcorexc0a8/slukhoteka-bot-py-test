@@ -489,7 +489,7 @@ async def gs_create(callback: CallbackQuery, state: FSMContext):
                 short_err = short_err[:77] + "…"
             lines.append(f"  • {name}: {short_err}")
 
-    # Сколько участников могут продолжить серию (есть ещё сессии)
+    # Сколько участников могут продолжить серию (есть ещё занятия)
     can_continue = [s for s in created_subs if s["remaining_after"] >= 1]
 
     buttons = []
@@ -519,7 +519,7 @@ async def gs_create(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "gs_recurring_yes")
 async def gs_recurring_yes(callback: CallbackQuery, state: FSMContext):
     """
-    Создаёт серию для всех участников, у кого остались сессии.
+    Создаёт серию для всех участников, у кого остались занятия.
     Удаляем уже созданную единичную бронь у каждого, потом — recurring.
     """
     user_data = await state.get_data()

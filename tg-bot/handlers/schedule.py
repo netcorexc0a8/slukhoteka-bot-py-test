@@ -106,9 +106,11 @@ class ScheduleState(StatesGroup):
     delete_select_booking = State()
     delete_confirm = State()
 
-    # Перенос индивидуальной брони
-    move_select_date = State()
-    move_select_time = State()
+    # Перенос индивидуальной брони (отдельный пункт меню)
+    move_pick_old_date = State()  # выбираем дату, на которой стоит запись
+    move_pick_booking = State()   # выбираем конкретную запись из списка
+    move_select_date = State()    # новая дата
+    move_select_time = State()    # новое время
 
     # Сразу после успешного создания индивидуальной — предложение создать серию
     after_create_offer_recurring = State()
@@ -124,6 +126,7 @@ async def cmd_schedule(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="📋 Посмотреть расписание", callback_data="schedule_view")],
         [InlineKeyboardButton(text="➕ Создать занятие", callback_data="schedule_create")],
         [InlineKeyboardButton(text="➕ Создать групповое занятие", callback_data="schedule_create_group")],
+        [InlineKeyboardButton(text="✏️ Перенести запись", callback_data="schedule_move_individual")],
         [InlineKeyboardButton(text="🔁 Перенести групповое занятие", callback_data="schedule_move_group")],
         [InlineKeyboardButton(text="🗑️ Удалить запись", callback_data="schedule_delete")],
         [InlineKeyboardButton(text="🎫 Абонементы", callback_data="subscriptions_menu")],
@@ -202,7 +205,15 @@ async def schedule_view_date(callback: CallbackQuery, state: FSMContext, date_st
             service = b.get("service_name") or ""
             session_info = ""
             if b.get("subscription_total"):
-                session_info = f" [{b.get('subscription_used') or 0}/{b['subscription_total']}]"
+                # Показываем порядковый номер ЭТОГО занятия в абонементе,
+                # а не глобальный счётчик used (он одинаковый у всех записей серии).
+                num = b.get("session_number")
+                total = b["subscription_total"]
+                if num:
+                    session_info = f" [{num}/{total}]"
+                else:
+                    # Историческая запись без session_number
+                    session_info = f" [—/{total}]"
 
             line = f"• {time_str} — {client_name}"
             if role != "specialist" and spec_name:
@@ -549,10 +560,10 @@ async def schedule_create_time_picked(callback: CallbackQuery, state: FSMContext
         await callback.answer()
         return
 
-    # Считаем, сколько ещё сессий осталось — для предложения серии
+    # Считаем, сколько ещё занятий осталось — для предложения серии
     remaining_after = (booking.get("subscription_remaining") or 0)
     # Серию имеет смысл предлагать только при weekly_limit-абонементах
-    # (4/8 индивидуальные). Косвенно: если осталось ≥1 сессия — кнопка появляется.
+    # (4/8 индивидуальные). Косвенно: если осталось ≥1 занятие — кнопка появляется.
     offer_recurring = remaining_after >= 1
 
     text = (
@@ -562,8 +573,8 @@ async def schedule_create_time_picked(callback: CallbackQuery, state: FSMContext
     )
     if offer_recurring:
         text += (
-            f"\n\nУ клиента осталось ещё {remaining_after} сессий по этому абонементу.\n"
-            f"Создать серию по 1 занятию в неделю на все оставшиеся сессии?"
+            f"\n\nУ клиента осталось ещё {remaining_after} занятий по этому абонементу.\n"
+            f"Создать серию по 1 занятию в неделю на все оставшиеся?"
         )
         # Сохраняем параметры для серии: первой записью будет та же дата+время,
         # ту, что только что создали, удалим перед созданием серии
@@ -598,7 +609,7 @@ async def sched_recurring_yes(callback: CallbackQuery, state: FSMContext):
     """
     Создаём серию: удаляем уже созданную одиночную бронь, потом зовём
     /bookings/recurring с тем же first_start_time. Backend создаст столько
-    броней, сколько осталось сессий (по 1 в неделю).
+    броней, сколько осталось занятий (по 1 в неделю).
     """
     user_data = await state.get_data()
     api = BackendAPIClient()
@@ -613,7 +624,7 @@ async def sched_recurring_yes(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    # Сначала удаляем одиночную запись (она вернёт сессию в абонемент),
+    # Сначала удаляем одиночную запись (она вернёт занятие в абонемент),
     # потом просим серию на все оставшиеся
     try:
         await api.booking_delete(booking_id=first_id, actor_id=actor_id)
@@ -742,23 +753,91 @@ async def schedule_delete_pick(callback: CallbackQuery, state: FSMContext):
     booking_id = int(callback.data.rsplit("_", 1)[-1])
     await state.update_data(delete_booking_id=booking_id)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗑️ Удалить", callback_data="sched_del_confirm")],
-        [InlineKeyboardButton(text="✏️ Перенести", callback_data="sched_move_start")],
+        [InlineKeyboardButton(text="🗑️ Да, удалить", callback_data="sched_del_confirm")],
         [InlineKeyboardButton(text="⬅️ Отмена", callback_data="schedule_delete")],
     ])
     await callback.message.edit_text(
-        "Что сделать с записью?\n\n"
-        "🗑️ Удалить — сессия абонемента вернётся.\n"
-        "✏️ Перенести — поменять дату и время.",
+        "Удалить запись?\n\n"
+        "Занятие абонемента вернётся клиенту.",
         reply_markup=keyboard,
     )
     await state.set_state(ScheduleState.delete_confirm)
     await callback.answer()
 
 
-@router.callback_query(F.data == "sched_move_start", ScheduleState.delete_confirm)
-async def sched_move_start(callback: CallbackQuery, state: FSMContext):
-    """Начало переноса индивидуальной брони. booking_id уже в delete_booking_id."""
+# =====================================================================
+# ПЕРЕНОС ИНДИВИДУАЛЬНОЙ ЗАПИСИ (отдельный пункт меню)
+# =====================================================================
+
+@router.callback_query(F.data == "schedule_move_individual")
+async def schedule_move_individual_start(callback: CallbackQuery, state: FSMContext):
+    """Шаг 1 переноса: выбираем дату записи, которую переносим."""
+    today = datetime.now()
+    await state.update_data(calendar_year=today.year, calendar_month=today.month)
+    await _show_calendar(callback, state, "Выберите дату записи, которую переносим:", today.year, today.month)
+    await state.set_state(ScheduleState.move_pick_old_date)
+    await callback.answer()
+
+
+async def schedule_move_pick_booking(callback: CallbackQuery, state: FSMContext, date_str: str):
+    """Шаг 2: показываем записи на эту дату — выбираем какую перенести."""
+    user_data = await state.get_data()
+    specialist_id = user_data.get("global_user_id")
+    role = user_data.get("role", "specialist")
+
+    try:
+        api = BackendAPIClient()
+        bookings = await api.bookings_for_date(
+            date=date_str,
+            specialist_id=specialist_id if role == "specialist" else None,
+        )
+        bookings = [
+            b for b in bookings
+            if not b.get("deleted_at")
+            and b.get("booking_type") != "group"  # групповые переносим отдельным flow
+            and b.get("status") not in ("cancelled", "specialist_cancelled")
+        ]
+        bookings.sort(key=lambda b: b["start_time"])
+    except Exception as e:
+        logger.exception("move list error")
+        await callback.message.edit_text(f"Ошибка: {e}")
+        return
+
+    if not bookings:
+        await callback.message.edit_text(
+            f"На {_format_date_human(date_str)} нет индивидуальных записей.\n"
+            f"Для переноса группового занятия используйте отдельный пункт меню.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="schedule_move_individual")
+            ]]),
+        )
+        return
+
+    buttons = []
+    for b in bookings:
+        time_str = b["start_time"][11:16]
+        client = b.get("client_name") or "—"
+        label = f"{time_str} — {client}"
+        if len(label) > 50:
+            label = label[:47] + "…"
+        buttons.append([InlineKeyboardButton(
+            text=label,
+            callback_data=f"sched_move_pick_{b['id']}",
+        )])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="schedule_move_individual")])
+
+    await callback.message.edit_text(
+        f"Записи на {_format_date_human(date_str)} — выберите для переноса:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await state.set_state(ScheduleState.move_pick_booking)
+
+
+@router.callback_query(F.data.startswith("sched_move_pick_"), ScheduleState.move_pick_booking)
+async def sched_move_picked(callback: CallbackQuery, state: FSMContext):
+    """Шаг 3: запись выбрана — спрашиваем новую дату."""
+    booking_id = int(callback.data.rsplit("_", 1)[-1])
+    await state.update_data(move_booking_id=booking_id)
     today = datetime.now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await _show_calendar(callback, state, "Выберите новую дату:", today.year, today.month)
@@ -775,7 +854,7 @@ async def _show_move_time_slots(callback: CallbackQuery, state: FSMContext):
         api = BackendAPIClient()
         bookings = await api.bookings_for_date(date=date_str, specialist_id=specialist_id)
         # Заняты слоты, где есть бронь специалиста, кроме самой переносимой брони
-        booking_id = user_data.get("delete_booking_id")
+        booking_id = user_data.get("move_booking_id")
         busy = {
             b["start_time"][11:16] for b in bookings
             if not b.get("deleted_at") and b.get("id") != booking_id
@@ -826,7 +905,7 @@ async def sched_move_back_to_date(callback: CallbackQuery, state: FSMContext):
 async def sched_move_time_picked(callback: CallbackQuery, state: FSMContext):
     time_str = callback.data.rsplit("_", 1)[-1]
     user_data = await state.get_data()
-    booking_id = user_data["delete_booking_id"]
+    booking_id = user_data["move_booking_id"]
     date_str = user_data["move_date"]
 
     new_start = f"{date_str}T{time_str}:00"
@@ -921,6 +1000,10 @@ async def calendar_callback(callback: CallbackQuery, state: FSMContext):
             return
         if current_state == ScheduleState.delete_select_date.state:
             await schedule_delete_select_booking(callback, state, date_str)
+            await callback.answer()
+            return
+        if current_state == ScheduleState.move_pick_old_date.state:
+            await schedule_move_pick_booking(callback, state, date_str)
             await callback.answer()
             return
         if current_state == ScheduleState.move_select_date.state:
