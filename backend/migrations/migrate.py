@@ -68,17 +68,27 @@ def run_migration(migration_file: Path) -> bool:
     no_tx = "NO_TRANSACTION" in sql.split("\n", 1)[0]
     raw_conn = engine.raw_connection()
     try:
-        raw_conn.autocommit = no_tx
+        raw_conn.autocommit = False  # Always disable autocommit for manual control
         cursor = raw_conn.cursor()
         try:
-            cursor.execute(sql)
-            if not no_tx:
+            if no_tx:
+                # Разделяем SQL на операторы по ;, игнорируем комментарии и выполняем по очереди с commit после каждого
+                statements = []
+                for stmt in sql.split(';'):
+                    lines = [line for line in stmt.split('\n') if not line.strip().startswith('--')]
+                    clean_stmt = '\n'.join(lines).strip()
+                    if clean_stmt:
+                        statements.append(clean_stmt)
+                for stmt in statements:
+                    cursor.execute(stmt)
+                    raw_conn.commit()  # Explicit commit after each statement
+            else:
+                cursor.execute(sql)
                 raw_conn.commit()
             logger.info(f"Migration {migration_file.name} completed successfully")
             return True
         except Exception:
-            if not no_tx:
-                raw_conn.rollback()
+            raw_conn.rollback()
             logger.error(f"Migration {migration_file.name} failed:")
             logger.error(traceback.format_exc())
             return False
