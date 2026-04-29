@@ -3,7 +3,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from config import settings
 from handlers import (
-    auth, menu, schedule, subscriptions, groups, group_session,
+    auth, menu, schedule, subscriptions, groups, group_session, group_move,
     users, statistics, export, export_ics, sync, backup,
 )
 from services.api_client import BackendAPIClient
@@ -37,6 +37,7 @@ dp.include_router(backup.router)
 dp.include_router(subscriptions.router)
 dp.include_router(groups.router)
 dp.include_router(group_session.router)
+dp.include_router(group_move.router)
 dp.include_router(schedule.router)
 
 dp["api_client"] = api_client

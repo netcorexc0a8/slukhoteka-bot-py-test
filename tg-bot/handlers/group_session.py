@@ -420,11 +420,13 @@ async def gs_create(callback: CallbackQuery, state: FSMContext):
 
     api = BackendAPIClient()
     created = []
+    created_subs: list[dict] = []  # для последующего предложения серии
     failed = []  # [(client_name, error_text)]
 
     # Создаём по одной брони на каждого выбранного клиента
     tasks = []
     task_clients = []
+    task_sub_ids = []
     for e in enriched:
         if e["client_id"] not in selected:
             continue
@@ -440,11 +442,12 @@ async def gs_create(callback: CallbackQuery, state: FSMContext):
         )
         tasks.append(task)
         task_clients.append(e["client_name"])
+        task_sub_ids.append(e["subscription_id"])
 
     # Execute all bookings concurrently
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    for name, result in zip(task_clients, results):
+    for name, sub_id, result in zip(task_clients, task_sub_ids, results):
         if isinstance(result, Exception):
             if isinstance(result, httpx.HTTPStatusError):
                 detail = ""
@@ -458,6 +461,14 @@ async def gs_create(callback: CallbackQuery, state: FSMContext):
                 failed.append((name, str(result)))
         else:
             created.append(name)
+            # Запомним subscription и оставшийся остаток после этой брони
+            remaining = (result.get("subscription_remaining") or 0)
+            created_subs.append({
+                "client_name": name,
+                "subscription_id": sub_id,
+                "booking_id": result.get("id"),
+                "remaining_after": remaining,
+            })
 
     lines = [
         "✅ Занятие создано." if created else "⚠️ Ничего не создано.",
@@ -478,11 +489,99 @@ async def gs_create(callback: CallbackQuery, state: FSMContext):
                 short_err = short_err[:77] + "…"
             lines.append(f"  • {name}: {short_err}")
 
+    # Сколько участников могут продолжить серию (есть ещё сессии)
+    can_continue = [s for s in created_subs if s["remaining_after"] >= 1]
+
+    buttons = []
+    if can_continue:
+        # Сохраняем данные серии в state — задействуем при подтверждении
+        await state.update_data(
+            gs_recurring_subs=can_continue,
+            gs_recurring_first_start=start_time,
+            gs_recurring_co_specialist_ids=co_specialist_ids,
+        )
+        # Минимальный остаток среди участников = реальное число будущих занятий в серии
+        min_remaining = min(s["remaining_after"] for s in can_continue)
+        buttons.append([InlineKeyboardButton(
+            text=f"🔁 Создать серию для {len(can_continue)} участников (+{min_remaining} занятий)",
+            callback_data="gs_recurring_yes",
+        )])
+    buttons.append([InlineKeyboardButton(text="⬅️ В меню расписания", callback_data="sched_back_to_main")])
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await state.set_state(None)
+    await callback.answer("Готово")
+
+
+@router.callback_query(F.data == "gs_recurring_yes")
+async def gs_recurring_yes(callback: CallbackQuery, state: FSMContext):
+    """
+    Создаёт серию для всех участников, у кого остались сессии.
+    Удаляем уже созданную единичную бронь у каждого, потом — recurring.
+    """
+    user_data = await state.get_data()
+    subs_info = user_data.get("gs_recurring_subs") or []
+    first_start = user_data.get("gs_recurring_first_start")
+    co_specialist_ids = user_data.get("gs_recurring_co_specialist_ids") or []
+    me_id = user_data.get("global_user_id")
+
+    if not subs_info or not first_start:
+        await callback.answer("Не хватает данных для серии.", show_alert=True)
+        return
+
+    api = BackendAPIClient()
+    series_ok = []
+    series_fail = []  # [(client_name, reason)]
+
+    for s in subs_info:
+        try:
+            await api.booking_delete(booking_id=s["booking_id"], actor_id=me_id)
+        except Exception as exc:
+            logger.exception("booking_delete (pre-recurring group) error")
+            series_fail.append((s["client_name"], f"подготовка: {exc}"))
+            continue
+        try:
+            result = await api.booking_create_recurring(
+                subscription_id=s["subscription_id"],
+                first_start_time=first_start,
+                specialist_id=me_id,
+                co_specialist_ids=co_specialist_ids,
+            )
+        except httpx.HTTPStatusError as exc:
+            detail = ""
+            try:
+                detail = exc.response.json().get("detail", "")
+            except Exception:
+                pass
+            series_fail.append((s["client_name"], detail or str(exc)))
+            continue
+        except Exception as exc:
+            logger.exception("booking_create_recurring (group) error")
+            series_fail.append((s["client_name"], str(exc)))
+            continue
+        n_created = len(result.get("created", []))
+        series_ok.append((s["client_name"], n_created))
+
+    lines = ["✅ Серия создана." if series_ok else "⚠️ Серия не создана.", ""]
+    if series_ok:
+        for name, n in series_ok:
+            lines.append(f"  • {name}: {n} занятий")
+    if series_fail:
+        lines.append("")
+        lines.append(f"Не удалось ({len(series_fail)}):")
+        for name, err in series_fail:
+            short = (err or "").replace("\n", " ")
+            if len(short) > 80:
+                short = short[:77] + "…"
+            lines.append(f"  • {name}: {short}")
+
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="⬅️ В меню расписания", callback_data="sched_back_to_main")
         ]]),
     )
-    await state.set_state(None)
-    await callback.answer("Готово")
+    await callback.answer()

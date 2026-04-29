@@ -35,6 +35,10 @@ def _has_specialist_conflict(
     Если новая бронь — групповая того же group_id и start_time, что и существующая,
     это одно и то же занятие, не конфликт.
     """
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=timezone.utc)
+    if end_time.tzinfo is None:
+        end_time = end_time.replace(tzinfo=timezone.utc)
     query = db.query(Booking).filter(
         Booking.specialist_id == specialist_id,
         Booking.deleted_at.is_(None),
@@ -447,6 +451,13 @@ def move_group_session(
     на новое время. Длительность сохраняется, либо берётся из duration_minutes.
     Возвращает (moved, failed_clients_with_reasons).
     """
+    # Нормализуем TZ: всё, что приходит из Pydantic без offset, считаем UTC.
+    # В БД start_time хранится TIMESTAMP WITH TIME ZONE (всегда tz-aware).
+    if old_start.tzinfo is None:
+        old_start = old_start.replace(tzinfo=timezone.utc)
+    if new_start.tzinfo is None:
+        new_start = new_start.replace(tzinfo=timezone.utc)
+
     bookings = (
         db.query(Booking)
         .options(
