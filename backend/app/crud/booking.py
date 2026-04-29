@@ -220,7 +220,7 @@ def _validate_and_resolve(
 def create_booking(db: Session, payload: BookingCreate) -> Booking:
     subscription, booking_type, specialist_id, new_group_id = _validate_and_resolve(db, payload)
     if subscription.used_sessions >= subscription.total_sessions:
-        raise SubscriptionExhausted("Все сессии абонемента уже использованы")
+        raise SubscriptionExhausted("Все занятия абонемента уже использованы")
 
     _check_weekly_limit(db, subscription, payload.start_time)
     if _has_specialist_conflict(
@@ -271,10 +271,10 @@ def create_recurring_bookings(
 ) -> Tuple[List[Booking], List[Tuple[datetime, str]]]:
     """
     Создаёт серию броней — по одной в неделю, начиная с first_start_time,
-    столько штук, сколько осталось сессий в абонементе.
+    столько штук, сколько осталось занятий в абонементе.
 
     Возвращает (created_bookings, failed_dates_with_reasons).
-    Если все сессии не помещаются (конфликты) — создадутся те, что смогли.
+    Если все занятия не помещаются (конфликты) — создадутся те, что смогли.
     """
     subscription = (
         db.query(ClientSubscription)
@@ -290,7 +290,7 @@ def create_recurring_bookings(
     service = subscription.service
     remaining = subscription.total_sessions - subscription.used_sessions
     if remaining <= 0:
-        raise SubscriptionExhausted("Все сессии абонемента уже использованы")
+        raise SubscriptionExhausted("Все занятия абонемента уже использованы")
 
     if service.is_group:
         if specialist_id is None:
