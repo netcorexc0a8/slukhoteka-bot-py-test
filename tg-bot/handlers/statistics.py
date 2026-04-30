@@ -11,7 +11,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
-@router.message(F.text == "📊 Статистика")
+@router.message(F.text.in_(["📊 Статистика", "📈 Статистика"]))
 async def cmd_statistics(message: Message, state: FSMContext):
     data = await state.get_data()
     role = data.get("role", "specialist")

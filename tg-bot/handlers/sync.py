@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 router = Router()
 logger = logging.getLogger(__name__)
 
-@router.message(F.text == "🔄 Синхронизация")
+@router.message(F.text.in_(["🔄 Синхронизация", "☁️ Синхр. Я.Диск"]))
 async def cmd_sync(message: Message, state: FSMContext):
     data = await state.get_data()
     role = data.get("role", "specialist")

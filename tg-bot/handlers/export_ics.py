@@ -9,7 +9,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
-@router.message(F.text == "📅 Экспорт ICS")
+@router.message(F.text.in_(["📅 Экспорт ICS", "📆 Экспорт ICS"]))
 async def cmd_export_ics(message: Message, state: FSMContext):
     data = await state.get_data()
     role = data.get("role", "specialist")

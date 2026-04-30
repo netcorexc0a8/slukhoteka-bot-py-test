@@ -4,7 +4,7 @@ from aiogram.client.default import DefaultBotProperties
 from config import settings
 from handlers import (
     auth, menu, schedule, subscriptions, groups, group_session, group_move,
-    users, statistics, export, export_ics, sync, backup,
+    users, statistics, export, export_ics, sync, backup, help as help_handler,
 )
 from services.api_client import BackendAPIClient
 from middlewares.auth_middleware import AuthMiddleware
@@ -25,6 +25,7 @@ api_client = BackendAPIClient()
 
 dp.include_router(auth.router)
 dp.include_router(menu.router)
+dp.include_router(help_handler.router)
 dp.include_router(users.router)
 dp.include_router(statistics.router)
 dp.include_router(export.router)

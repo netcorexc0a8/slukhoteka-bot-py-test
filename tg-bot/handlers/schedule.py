@@ -97,13 +97,13 @@ class ScheduleState(StatesGroup):
 
     create_select_client = State()
     create_new_client_name = State()
+    create_new_client_phone = State()
     create_select_subscription = State()
     create_select_date = State()
     create_select_time = State()
 
     delete_select_date = State()
     delete_select_booking = State()
-    delete_confirm = State()
 
     # Перенос индивидуальной брони (отдельный пункт меню)
     move_pick_old_date = State()  # выбираем дату, на которой стоит запись
@@ -123,18 +123,50 @@ class ScheduleState(StatesGroup):
 async def cmd_schedule(message: Message, state: FSMContext):
     buttons = [
         [InlineKeyboardButton(text="📋 Посмотреть расписание", callback_data="schedule_view")],
-        [InlineKeyboardButton(text="➕ Создать занятие", callback_data="schedule_create")],
-        [InlineKeyboardButton(text="➕ Создать групповое занятие", callback_data="schedule_create_group")],
-        [InlineKeyboardButton(text="✏️ Перенести запись", callback_data="schedule_move_individual")],
-        [InlineKeyboardButton(text="🔁 Перенести групповое занятие", callback_data="schedule_move_group")],
-        [InlineKeyboardButton(text="🗑️ Удалить запись", callback_data="schedule_delete")],
-        [InlineKeyboardButton(text="🎫 Абонементы", callback_data="subscriptions_menu")],
+        [InlineKeyboardButton(text="➕ Создать запись", callback_data="schedule_create_hub")],
+        [InlineKeyboardButton(text="✏️ Изменить запись", callback_data="schedule_edit_hub")],
+        [InlineKeyboardButton(text="🎫 Абонементы клиентов", callback_data="subscriptions_menu")],
         [InlineKeyboardButton(text="👥 Группы", callback_data="groups_menu")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="schedule_back")],
+        [InlineKeyboardButton(text="ℹ️ Справка", callback_data="schedule_help")],
+        [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="schedule_back")],
     ]
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await message.answer("📅 Управление расписанием", reply_markup=keyboard)
     await state.set_state(ScheduleState.main)
+
+
+@router.callback_query(F.data == "schedule_create_hub")
+async def schedule_create_hub(callback: CallbackQuery, state: FSMContext):
+    """Хаб: индивидуальная или групповая запись?"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Индивидуальная запись", callback_data="schedule_create")],
+        [InlineKeyboardButton(text="👥 Групповое занятие", callback_data="schedule_create_group")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="sched_back_to_main")],
+    ])
+    await callback.message.edit_text(
+        "Какую запись создаём?",
+        reply_markup=keyboard,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "schedule_edit_hub")
+async def schedule_edit_hub(callback: CallbackQuery, state: FSMContext):
+    """Хаб: что хотим сделать с записью — перенести или удалить?"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Перенести запись", callback_data="schedule_move_individual")],
+        [InlineKeyboardButton(text="🔁 Перенести группу", callback_data="schedule_move_group")],
+        [InlineKeyboardButton(text="🗑️ Удалить запись", callback_data="schedule_delete")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="sched_back_to_main")],
+    ])
+    await callback.message.edit_text(
+        "Что сделать с записью?\n\n"
+        "✏️ Перенести запись — перенос индивидуальной брони на другое время.\n"
+        "🔁 Перенести группу — перенос всего группового занятия.\n"
+        "🗑️ Удалить запись — отменить запись и вернуть занятие в абонемент.",
+        reply_markup=keyboard,
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "schedule_back")
@@ -335,13 +367,29 @@ async def schedule_create_new_client_name(message: Message, state: FSMContext):
     if not name:
         await message.answer("Имя не может быть пустым. Введите имя:")
         return
+    await state.update_data(new_client_name=name)
+    await message.answer(
+        "Введите телефон клиента (например, +79991234567).\n"
+        "Если телефона нет — отправьте «-».",
+    )
+    await state.set_state(ScheduleState.create_new_client_phone)
 
+
+@router.message(ScheduleState.create_new_client_phone)
+async def schedule_create_new_client_phone(message: Message, state: FSMContext):
+    phone_raw = (message.text or "").strip()
     user_data = await state.get_data()
+    name = user_data.get("new_client_name", "Без имени")
     specialist_id = user_data.get("global_user_id")
+
+    if phone_raw == "-" or not phone_raw:
+        phone = f"manual:{specialist_id}:{int(datetime.now().timestamp())}"
+    else:
+        phone = phone_raw
 
     try:
         api = BackendAPIClient()
-        client = await api.client_create(user_id=specialist_id, name=name, phone=None)
+        client = await api.client_create(user_id=specialist_id, name=name, phone=phone)
     except httpx.HTTPStatusError as e:
         detail = ""
         try:
@@ -733,19 +781,28 @@ async def schedule_delete_select_booking(callback: CallbackQuery, state: FSMCont
 
 @router.callback_query(F.data.startswith("sched_del_pick_"), ScheduleState.delete_select_booking)
 async def schedule_delete_pick(callback: CallbackQuery, state: FSMContext):
+    """Удаление брони сразу, без промежуточного подтверждения."""
     booking_id = int(callback.data.rsplit("_", 1)[-1])
-    await state.update_data(delete_booking_id=booking_id)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗑️ Да, удалить", callback_data="sched_del_confirm")],
-        [InlineKeyboardButton(text="⬅️ Отмена", callback_data="schedule_delete")],
-    ])
+    actor_id = (await state.get_data()).get("global_user_id")
+    try:
+        api = BackendAPIClient()
+        ok = await api.booking_delete(booking_id=booking_id, actor_id=actor_id)
+    except Exception as e:
+        logger.exception("booking_delete error")
+        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.answer()
+        return
+
+    text = "✅ Запись удалена. Занятие вернётся в абонемент." if ok else "Не удалось удалить запись."
     await callback.message.edit_text(
-        "Удалить запись?\n\n"
-        "Занятие абонемента вернётся клиенту.",
-        reply_markup=keyboard,
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🗑️ Удалить ещё", callback_data="schedule_delete")],
+            [InlineKeyboardButton(text="⬅️ В меню расписания", callback_data="sched_back_to_main")],
+        ]),
     )
-    await state.set_state(ScheduleState.delete_confirm)
-    await callback.answer()
+    await state.set_state(ScheduleState.main)
+    await callback.answer("Удалено")
 
 
 # =====================================================================
@@ -929,29 +986,7 @@ async def sched_move_time_picked(callback: CallbackQuery, state: FSMContext):
     await callback.answer("Готово")
 
 
-@router.callback_query(F.data == "sched_del_confirm", ScheduleState.delete_confirm)
-async def schedule_delete_confirm(callback: CallbackQuery, state: FSMContext):
-    user_data = await state.get_data()
-    booking_id = user_data.get("delete_booking_id")
-    actor_id = user_data.get("global_user_id")
-    try:
-        api = BackendAPIClient()
-        ok = await api.booking_delete(booking_id=booking_id, actor_id=actor_id)
-    except Exception as e:
-        logger.exception("booking_delete error")
-        await callback.message.edit_text(f"Ошибка: {e}")
-        await callback.answer()
-        return
 
-    text = "✅ Запись удалена." if ok else "Не удалось удалить запись."
-    await callback.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="⬅️ В меню расписания", callback_data="sched_back_to_main")
-        ]]),
-    )
-    await state.set_state(ScheduleState.main)
-    await callback.answer()
 
 
 # =====================================================================
