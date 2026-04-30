@@ -97,7 +97,6 @@ class ScheduleState(StatesGroup):
 
     create_select_client = State()
     create_new_client_name = State()
-    create_new_client_phone = State()
     create_select_subscription = State()
     create_select_date = State()
     create_select_time = State()
@@ -336,29 +335,13 @@ async def schedule_create_new_client_name(message: Message, state: FSMContext):
     if not name:
         await message.answer("Имя не может быть пустым. Введите имя:")
         return
-    await state.update_data(new_client_name=name)
-    await message.answer(
-        "Введите телефон клиента (например, +79991234567).\n"
-        "Если телефона нет — отправьте «-».",
-    )
-    await state.set_state(ScheduleState.create_new_client_phone)
 
-
-@router.message(ScheduleState.create_new_client_phone)
-async def schedule_create_new_client_phone(message: Message, state: FSMContext):
-    phone_raw = (message.text or "").strip()
     user_data = await state.get_data()
-    name = user_data.get("new_client_name", "Без имени")
     specialist_id = user_data.get("global_user_id")
-
-    if phone_raw == "-" or not phone_raw:
-        phone = f"manual:{specialist_id}:{int(datetime.now().timestamp())}"
-    else:
-        phone = phone_raw
 
     try:
         api = BackendAPIClient()
-        client = await api.client_create(user_id=specialist_id, name=name, phone=phone)
+        client = await api.client_create(user_id=specialist_id, name=name, phone=None)
     except httpx.HTTPStatusError as e:
         detail = ""
         try:

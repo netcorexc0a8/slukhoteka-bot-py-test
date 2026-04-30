@@ -38,8 +38,7 @@ class GroupsState(StatesGroup):
 
     # Создание
     create_enter_name = State()
-    create_select_day = State()
-    create_enter_time = State()
+    create_select_service = State()
 
     # Редактирование
     edit_enter_name = State()
@@ -197,122 +196,61 @@ async def grp_create_name(message: Message, state: FSMContext):
         return
     await state.update_data(new_group_name=name)
 
-    buttons = []
-    for i, day in enumerate(DAY_NAMES_SHORT):
-        buttons.append([InlineKeyboardButton(
-            text=day,
-            callback_data=f"grp_create_day_{i}",
-        )])
-    buttons.append([InlineKeyboardButton(text="Без расписания", callback_data="grp_create_day_none")])
-
-    await message.answer(
-        "Выберите день недели по умолчанию (для удобства подсказок при создании занятий):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
-    await state.set_state(GroupsState.create_select_day)
-
-
-@router.callback_query(F.data.startswith("grp_create_day_"), GroupsState.create_select_day)
-async def grp_create_day(callback: CallbackQuery, state: FSMContext):
-    suffix = callback.data.rsplit("_", 1)[-1]
-    if suffix == "none":
-        # Создаём сразу без времени
-        await _do_create_group(callback, state, day_of_week=None, time=None)
-        return
-    day_idx = int(suffix)
-    await state.update_data(new_group_day=day_idx)
-    await callback.message.edit_text(
-        "Введите время по умолчанию в формате HH:MM (например, 10:00):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="Пропустить", callback_data="grp_create_skip_time")
-        ]]),
-    )
-    await state.set_state(GroupsState.create_enter_time)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "grp_create_skip_time", GroupsState.create_enter_time)
-async def grp_create_skip_time(callback: CallbackQuery, state: FSMContext):
-    user_data = await state.get_data()
-    await _do_create_group(callback, state, day_of_week=user_data.get("new_group_day"), time=None)
-
-
-@router.message(GroupsState.create_enter_time)
-async def grp_create_time(message: Message, state: FSMContext):
-    text = (message.text or "").strip()
-    # Простая валидация HH:MM
-    valid = False
-    if len(text) == 5 and text[2] == ":":
-        try:
-            hh, mm = int(text[:2]), int(text[3:])
-            if 0 <= hh < 24 and 0 <= mm < 60:
-                valid = True
-        except ValueError:
-            pass
-    if not valid:
-        await message.answer("Неверный формат. Введите время в формате HH:MM, например 10:00:")
-        return
-
-    user_data = await state.get_data()
-
-    # Тут нет callback'а — нужно создать руками
-    api = BackendAPIClient()
-    services = await api.services_list()
-    logo_service = next((s for s in services if s.get("service_type") == "logorhythmics"), None)
-    if not logo_service:
-        await message.answer("Услуга «Алгоритмика» не найдена в справочнике.")
-        return
-
+    # Выбор услуги — все групповые из справочника (Алгоритмика, Чтение, …)
     try:
-        group = await api.group_create(
-            name=user_data["new_group_name"],
-            service_id=logo_service["id"],
-            day_of_week=user_data.get("new_group_day"),
-            time=text,
-        )
-    except httpx.HTTPStatusError as e:
-        detail = ""
-        try:
-            detail = e.response.json().get("detail", "")
-        except Exception:
-            pass
-        await message.answer(f"Не удалось создать группу: {detail or e}")
-        return
+        api = BackendAPIClient()
+        services = await api.services_list()
     except Exception as e:
-        logger.exception("group_create error")
+        logger.exception("services_list error")
         await message.answer(f"Ошибка: {e}")
         return
 
-    await message.answer(f"✅ Группа «{group['name']}» создана.")
-    # Покажем детали через искусственный callback
-    fake_msg = await message.answer("…")
-    await state.update_data(group_id=group["id"])
+    group_services = [s for s in services if s.get("is_group") and s.get("is_active")]
+    if not group_services:
+        await message.answer("В справочнике нет групповых услуг.")
+        return
 
-    class _C:
-        def __init__(self, m): self.message = m
-        async def answer(self, *a, **k): return None
+    # Если групповая услуга только одна — создаём сразу, без выбора
+    if len(group_services) == 1:
+        await _create_group_and_show(message, state, group_services[0]["id"])
+        return
 
-    await _show_group_detail(_C(fake_msg), state)
+    buttons = []
+    for s in group_services:
+        buttons.append([InlineKeyboardButton(
+            text=s["name"],
+            callback_data=f"grp_create_svc_{s['id']}",
+        )])
+    buttons.append([InlineKeyboardButton(text="⬅️ Отмена", callback_data="groups_menu")])
+
+    await message.answer(
+        "Выберите тип группы:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await state.set_state(GroupsState.create_select_service)
 
 
-async def _do_create_group(
-    callback: CallbackQuery, state: FSMContext,
-    day_of_week, time,
-):
-    """Создание группы из callback (когда время не запрашиваем)."""
+@router.callback_query(F.data.startswith("grp_create_svc_"), GroupsState.create_select_service)
+async def grp_create_svc(callback: CallbackQuery, state: FSMContext):
+    service_id = int(callback.data.rsplit("_", 1)[-1])
+    await _create_group_and_show(callback, state, service_id)
+    await callback.answer()
+
+
+async def _create_group_and_show(target, state: FSMContext, service_id: int):
+    """
+    Создаёт группу и показывает её детали.
+    target — либо Message (когда пришли из text-handler), либо CallbackQuery.
+    """
     user_data = await state.get_data()
+
     api = BackendAPIClient()
     try:
-        services = await api.services_list()
-        logo_service = next((s for s in services if s.get("service_type") == "logorhythmics"), None)
-        if not logo_service:
-            await callback.message.edit_text("Услуга «Алгоритмика» не найдена в справочнике.")
-            return
         group = await api.group_create(
             name=user_data["new_group_name"],
-            service_id=logo_service["id"],
-            day_of_week=day_of_week,
-            time=time,
+            service_id=service_id,
+            day_of_week=None,
+            time=None,
         )
     except httpx.HTTPStatusError as e:
         detail = ""
@@ -320,23 +258,41 @@ async def _do_create_group(
             detail = e.response.json().get("detail", "")
         except Exception:
             pass
-        await callback.message.edit_text(f"Не удалось создать группу: {detail or e}")
+        msg_text = f"Не удалось создать группу: {detail or e}"
+        if hasattr(target, "message"):
+            await target.message.edit_text(msg_text)
+        else:
+            await target.answer(msg_text)
         return
     except Exception as e:
         logger.exception("group_create error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        msg_text = f"Ошибка: {e}"
+        if hasattr(target, "message"):
+            await target.message.edit_text(msg_text)
+        else:
+            await target.answer(msg_text)
         return
 
     await state.update_data(group_id=group["id"])
-    await callback.message.edit_text(f"✅ Группа «{group['name']}» создана.")
-    # Покажем детали
-    fake_msg = await callback.message.answer("…")
+
+    # Показываем детали свежесозданной группы
+    if hasattr(target, "message"):
+        # CallbackQuery
+        await target.message.edit_text(f"✅ Группа «{group['name']}» создана.")
+        fake_msg = await target.message.answer("…")
+    else:
+        # Message
+        await target.answer(f"✅ Группа «{group['name']}» создана.")
+        fake_msg = await target.answer("…")
 
     class _C:
         def __init__(self, m): self.message = m
         async def answer(self, *a, **k): return None
 
     await _show_group_detail(_C(fake_msg), state)
+
+
+
 
 
 # =====================================================================

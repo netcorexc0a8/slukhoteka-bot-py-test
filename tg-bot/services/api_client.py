@@ -79,11 +79,16 @@ class BackendAPIClient:
             response.raise_for_status()
             return response.json()
 
-    async def client_create(self, user_id: int, name: str, phone: str) -> Dict[str, Any]:
+    async def client_create(
+        self, user_id: int, name: str, phone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"global_user_id": user_id, "name": name}
+        if phone:
+            payload["phone"] = phone
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{self.base_url}/api/v1/clients",
-                json={"global_user_id": user_id, "name": name, "phone": phone},
+                json=payload,
             )
             response.raise_for_status()
             return response.json()

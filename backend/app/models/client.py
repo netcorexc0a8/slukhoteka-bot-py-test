@@ -10,7 +10,7 @@ class Client(Base):
     id = Column(Integer, primary_key=True, index=True)
     global_user_id = Column(Integer, ForeignKey("global_users.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
-    phone = Column(String(20), nullable=False, index=True)
+    phone = Column(String(50), nullable=True, index=True)
     is_active = Column(Boolean, default=True, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
