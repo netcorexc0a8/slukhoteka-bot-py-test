@@ -14,4 +14,9 @@ COPY . .
 
 RUN mkdir -p /app/data/ics_files
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Копируем и делаем исполняемым entrypoint, который сначала прогоняет миграции,
+# а потом стартует uvicorn
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

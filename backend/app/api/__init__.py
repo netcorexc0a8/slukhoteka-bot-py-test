@@ -1,3 +1,25 @@
-from . import auth, schedule, users, export, sync, backup
+from . import (
+    auth,
+    users,
+    export,
+    sync,
+    backup,
+    client,
+    service,
+    subscription,
+    booking,
+    group,
+)
 
-__all__ = ["auth", "schedule", "users", "export", "sync", "backup"]
+__all__ = [
+    "auth",
+    "users",
+    "export",
+    "sync",
+    "backup",
+    "client",
+    "service",
+    "subscription",
+    "booking",
+    "group",
+]
