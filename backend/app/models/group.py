@@ -17,7 +17,7 @@ class Group(Base):
     id = Column(String(100), primary_key=True)
     name = Column(String(255), nullable=False)
     service_id = Column(Integer, ForeignKey("services.id", ondelete="RESTRICT"), nullable=False, index=True)
-    max_participants = Column(Integer, nullable=False, default=8)
+    max_participants = Column(Integer, nullable=False, default=6)
     # Дефолтное расписание группы (для подсказок при создании занятий)
     day_of_week = Column(Integer, nullable=True)  # 0..6 (Mon..Sun)
     time = Column(String(5), nullable=True)        # 'HH:MM'

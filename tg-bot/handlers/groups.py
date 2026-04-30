@@ -137,7 +137,7 @@ async def _show_group_detail(callback: CallbackQuery, state: FSMContext):
         return
 
     name = group.get("name", "")
-    max_part = group.get("max_participants", 8)
+    max_part = group.get("max_participants", 6)
     participants = [p for p in (group.get("participants") or []) if p.get("is_active")]
 
     schedule_hint = "—"
@@ -350,8 +350,8 @@ async def grp_back_detail(callback: CallbackQuery, state: FSMContext):
 async def grp_delete(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "Удалить группу?\n\n"
-        "Состав группы будет очищен. Уже выданные абонементы «Алгоритмика» "
-        "потеряют привязку к группе, но не будут удалены.",
+        "Состав группы будет очищен. Уже выданные абонементы клиентов "
+        "потеряют привязку к этой группе, но сами не будут удалены.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🗑️ Да, удалить", callback_data="grp_delete_confirm")],
             [InlineKeyboardButton(text="⬅️ Отмена", callback_data="grp_back_detail")],
@@ -411,7 +411,7 @@ async def _show_manage_participants(callback: CallbackQuery, state: FSMContext):
 
     participants = [p for p in (group.get("participants") or []) if p.get("is_active")]
     name = group.get("name", "")
-    max_part = group.get("max_participants", 8)
+    max_part = group.get("max_participants", 6)
 
     text_lines = [f"👥 Состав группы «{name}» ({len(participants)}/{max_part})", ""]
 

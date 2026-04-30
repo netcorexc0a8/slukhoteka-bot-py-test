@@ -1066,9 +1066,17 @@ async def calendar_callback(callback: CallbackQuery, state: FSMContext):
 
         specialist_id = user_data.get("global_user_id")
         role = user_data.get("role", "specialist")
-        busy = await _busy_dates_for_month(
-            year, month, specialist_id if role == "specialist" else None
-        )
+
+        # В group_session flow при подсветке исключаем СВОИ же занятия этой группы.
+        if current_state and "GroupSessionState" in current_state:
+            from handlers.group_session import _gs_busy_dates_for_month
+            busy = await _gs_busy_dates_for_month(
+                year, month, specialist_id, user_data.get("gs_group_id")
+            )
+        else:
+            busy = await _busy_dates_for_month(
+                year, month, specialist_id if role == "specialist" else None
+            )
         kb = get_calendar_keyboard(year, month, busy)
         await callback.message.edit_reply_markup(reply_markup=kb)
         await callback.answer()

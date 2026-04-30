@@ -179,7 +179,7 @@ class BackendAPIClient:
 
     async def group_create(
         self, name: str, service_id: int,
-        max_participants: int = 8,
+        max_participants: int = 6,
         day_of_week: Optional[int] = None, time: Optional[str] = None,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {

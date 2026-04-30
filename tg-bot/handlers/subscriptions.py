@@ -274,7 +274,7 @@ async def _show_groups_for_issue(callback: CallbackQuery, state: FSMContext):
     buttons = []
     for i, g in enumerate(groups):
         active_count = sum(1 for p in (g.get("participants") or []) if p.get("is_active"))
-        max_part = g.get("max_participants", 8)
+        max_part = g.get("max_participants", 6)
         label = f"{g.get('name', '?')} ({active_count}/{max_part})"
         if active_count >= max_part:
             label = f"⚠️ {label} полная"
@@ -283,8 +283,10 @@ async def _show_groups_for_issue(callback: CallbackQuery, state: FSMContext):
         buttons.append([InlineKeyboardButton(text=label, callback_data=f"subs_issue_grp_{i}")])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="subs_issue_start")])
 
+    service = user_data.get("subs_issue_service") or {}
+    service_name = service.get("name") or "групповой абонемент"
     await callback.message.edit_text(
-        "Выберите группу для абонемента «Алгоритмика»:",
+        f"Выберите группу для абонемента «{service_name}»:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await state.set_state(SubscriptionState.issue_select_group)

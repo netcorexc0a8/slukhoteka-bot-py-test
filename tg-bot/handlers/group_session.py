@@ -45,6 +45,44 @@ def _format_date_human(date_str: str) -> str:
     return f"{d.strftime('%d.%m.%Y')} ({DAY_NAMES[d.weekday()]})"
 
 
+async def _gs_busy_dates_for_month(
+    year: int, month: int, specialist_id: int, own_group_id: str | None,
+) -> list:
+    """
+    Даты в месяце, на которые у специалиста есть занятая бронь,
+    исключая собственное групповое занятие (own_group_id) — туда можно
+    дозаписать клиентов.
+    """
+    try:
+        api = BackendAPIClient()
+        first = datetime(year, month, 1)
+        if month == 12:
+            last = datetime(year + 1, 1, 1)
+        else:
+            last = datetime(year, month + 1, 1)
+        bookings = await api.bookings_for_range(
+            start_date=first.strftime("%Y-%m-%d"),
+            end_date=(last - timedelta(days=1)).strftime("%Y-%m-%d"),
+            specialist_id=specialist_id,
+        )
+        seen = set()
+        for b in bookings:
+            if b.get("deleted_at"):
+                continue
+            if b.get("status") in ("cancelled", "specialist_cancelled"):
+                continue
+            if (
+                b.get("booking_type") == "group"
+                and b.get("group_id") == own_group_id
+            ):
+                continue
+            seen.add(b["start_time"][:10])
+        return list(seen)
+    except Exception as e:
+        logger.error(f"_gs_busy_dates_for_month error: {e}")
+        return []
+
+
 class GroupSessionState(StatesGroup):
     select_group = State()
     select_date = State()
@@ -111,11 +149,15 @@ async def gs_group_picked(callback: CallbackQuery, state: FSMContext):
     group = groups[idx]
     await state.update_data(gs_group_id=group["id"], gs_group_name=group["name"])
 
+    user_data = await state.get_data()
+    specialist_id = user_data.get("global_user_id")
+
     today = datetime.now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
+    busy = await _gs_busy_dates_for_month(today.year, today.month, specialist_id, group["id"])
     await callback.message.edit_text(
         f"Группа: «{group['name']}»\nВыберите дату занятия:",
-        reply_markup=get_calendar_keyboard(today.year, today.month, []),
+        reply_markup=get_calendar_keyboard(today.year, today.month, busy),
     )
     await state.set_state(GroupSessionState.select_date)
     await callback.answer()
@@ -130,10 +172,27 @@ async def gs_show_time_slots(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     date_str = user_data["gs_date"]
     specialist_id = user_data.get("global_user_id")
+    own_group_id = user_data.get("gs_group_id")
 
     try:
-        # For group sessions, don't check specialist availability as it should allow multiple concurrent group bookings
+        api = BackendAPIClient()
+        bookings = await api.bookings_for_date(date=date_str, specialist_id=specialist_id)
+
+        # Слот занят, если у специалиста в это время есть бронь и это
+        # НЕ его же групповое занятие этой же группы (туда мы можем
+        # дозаписать ещё участников).
         busy = set()
+        for b in bookings:
+            if b.get("deleted_at"):
+                continue
+            if b.get("status") in ("cancelled", "specialist_cancelled"):
+                continue
+            if (
+                b.get("booking_type") == "group"
+                and b.get("group_id") == own_group_id
+            ):
+                continue
+            busy.add(b["start_time"][11:16])
 
         slots = []
         for hour in range(settings.START_HOUR, settings.END_HOUR + 1):
@@ -175,9 +234,12 @@ async def gs_back_to_date(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     year = user_data.get("calendar_year", datetime.now().year)
     month = user_data.get("calendar_month", datetime.now().month)
+    specialist_id = user_data.get("global_user_id")
+    own_group_id = user_data.get("gs_group_id")
+    busy = await _gs_busy_dates_for_month(year, month, specialist_id, own_group_id)
     await callback.message.edit_text(
         f"Группа: «{user_data.get('gs_group_name', '')}»\nВыберите дату занятия:",
-        reply_markup=get_calendar_keyboard(year, month, []),
+        reply_markup=get_calendar_keyboard(year, month, busy),
     )
     await state.set_state(GroupSessionState.select_date)
     await callback.answer()
@@ -222,10 +284,11 @@ async def _show_attendees(callback: CallbackQuery, state: FSMContext, init: bool
             subs = await api.subscriptions_for_client(client_id=client_id, only_usable=True)
         except Exception:
             subs = []
-        # Берём первый usable абонемент алгоритмики этой группы
+        # Берём первый usable абонемент этой группы.
+        # Тип услуги (logorhythmics / reading / ...) определяется самой группой,
+        # поэтому достаточно фильтра по group_id.
         match = next(
-            (s for s in subs
-             if s.get("group_id") == group_id and s.get("service_type") == "logorhythmics"),
+            (s for s in subs if s.get("group_id") == group_id),
             None,
         )
         enriched.append({
@@ -284,8 +347,8 @@ async def _show_attendees(callback: CallbackQuery, state: FSMContext, init: bool
 @router.callback_query(F.data == "gs_noop", GroupSessionState.pick_attendees)
 async def gs_noop(callback: CallbackQuery, state: FSMContext):
     await callback.answer(
-        "У клиента нет активного абонемента «Алгоритмика» в этой группе. "
-        "Выдайте ему абонемент в разделе «🎫 Абонементы».",
+        "У клиента нет активного абонемента для этой группы. "
+        "Выдайте абонемент в разделе «🎫 Абонементы клиентов».",
         show_alert=True,
     )
 
