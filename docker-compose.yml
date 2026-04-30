@@ -24,7 +24,7 @@ services:
     container_name: slukhoteka-backend-test
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-slukhoteka}:${POSTGRES_PASSWORD:-slukhoteka_pass}@slukhoteka-db-test:5432/${POSTGRES_DB:-slukhoteka}
       ADMIN_USER_PH: ${ADMIN_USER_PH}
