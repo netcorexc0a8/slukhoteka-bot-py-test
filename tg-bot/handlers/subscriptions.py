@@ -9,6 +9,7 @@
 flow создания записи (если у клиента нет нужного абонемента).
 """
 import logging
+from datetime import datetime
 
 import httpx
 from aiogram import F, Router
@@ -138,6 +139,13 @@ async def _show_subs_for_client(callback: CallbackQuery, state: FSMContext):
             total = s.get("total_sessions", 0)
             spec = s.get("assigned_specialist_name") or ""
             group = s.get("group_name") or ""
+            purchased = (s.get("purchased_at") or "")[:10]
+            # YYYY-MM-DD → DD.MM.YYYY
+            try:
+                purchased_human = datetime.strptime(purchased, "%Y-%m-%d").strftime("%d.%m.%Y")
+            except Exception:
+                purchased_human = purchased
+
             status_emoji = {
                 "active": "🟢", "completed": "✅", "expired": "⏰", "cancelled": "⛔",
             }.get(status, "•")
@@ -146,6 +154,8 @@ async def _show_subs_for_client(callback: CallbackQuery, state: FSMContext):
                 line += f" — 👥 {group}"
             elif spec:
                 line += f" — {spec}"
+            if purchased_human:
+                line += f" (от {purchased_human})"
             lines.append(line)
 
     text = "\n".join(lines)
