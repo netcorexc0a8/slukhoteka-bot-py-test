@@ -35,6 +35,7 @@ class SubscriptionState(StatesGroup):
     issue_select_group = State()  # для алгоритмики — выбор группы
     cancel_select_sub = State()
     cancel_confirm = State()
+    transfer_select_owner = State()  # выбор нового владельца клиента
 
 
 RETURN_KEY = "subscriptions_return_to"
@@ -53,10 +54,13 @@ async def subscriptions_menu(callback: CallbackQuery, state: FSMContext):
 async def _show_clients_list(callback: CallbackQuery, state: FSMContext, return_to: str | None):
     user_data = await state.get_data()
     specialist_id = user_data.get("global_user_id")
+    role = user_data.get("role", "specialist")
 
     try:
         api = BackendAPIClient()
-        clients = await api.clients_get_all(user_id=specialist_id)
+        # admin/methodist видят всех, specialist — только своих
+        uid = None if role in ("admin", "methodist") else specialist_id
+        clients = await api.clients_get_all(user_id=uid)
     except Exception as e:
         logger.exception("subs: clients fetch error")
         await callback.message.edit_text(f"Ошибка загрузки клиентов: {e}")
@@ -108,6 +112,7 @@ async def subs_client_picked(callback: CallbackQuery, state: FSMContext):
     await state.update_data(
         subs_client_id=client["id"],
         subs_client_name=client["name"],
+        subs_client_owner_id=client.get("global_user_id"),
     )
     await _show_subs_for_client(callback, state)
     await callback.answer()
@@ -175,6 +180,15 @@ async def _show_subs_for_client(callback: CallbackQuery, state: FSMContext):
                 callback_data=f"subs_cancel_{s['id']}",
             )])
     buttons.append([InlineKeyboardButton(text="🎫 Выдать новый абонемент", callback_data="subs_issue_start")])
+
+    # Кнопка передачи — только для admin/methodist
+    role = user_data.get("role", "specialist")
+    if role in ("admin", "methodist"):
+        buttons.append([InlineKeyboardButton(
+            text="🔁 Передать клиента",
+            callback_data=f"subs_transfer_{client_id}",
+        )])
+
     buttons.append([InlineKeyboardButton(text="⬅️ Назад к клиентам", callback_data="subscriptions_menu")])
 
     await callback.message.edit_text(
@@ -476,3 +490,167 @@ async def start_issue_flow_inline(
         **{RETURN_KEY: return_to},
     )
     await subs_issue_start(callback, state)
+
+# =====================================================================
+# Передача клиента другому специалисту (admin/methodist)
+# =====================================================================
+
+@router.callback_query(F.data.startswith("subs_transfer_"), SubscriptionState.client_subscriptions)
+async def subs_transfer_start(callback: CallbackQuery, state: FSMContext):
+    """Начало передачи клиента: проверяем возможность и показываем список специалистов."""
+    user_data = await state.get_data()
+    role = user_data.get("role", "specialist")
+    if role not in ("admin", "methodist"):
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    client_id = int(callback.data.rsplit("_", 1)[-1])
+    client_name = user_data.get("subs_client_name") or "клиента"
+
+    api = BackendAPIClient()
+
+    # Проверяем, можно ли передать
+    try:
+        check = await api.client_can_transfer(client_id)
+    except Exception as e:
+        logger.exception("can_transfer error")
+        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.answer()
+        return
+
+    if not check.get("can_transfer"):
+        await callback.message.edit_text(
+            f"Передача невозможна.\n\n{check.get('reason', '')}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⬅️ Назад", callback_data=f"subs_client_back_{client_id}")
+            ]]),
+        )
+        await callback.answer()
+        return
+
+    # Получаем список специалистов
+    try:
+        users = await api.users_get_all()
+    except Exception as e:
+        logger.exception("users_list error")
+        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.answer()
+        return
+
+    current_owner_id = user_data.get("subs_client_owner_id")  # может быть не сохранён — это не критично
+
+    candidates = [
+        u for u in users
+        if u.get("role") in ("specialist", "methodist", "admin")
+        and not u.get("deleted_at")
+        and u.get("is_active", True)
+        and u.get("id") != current_owner_id
+    ]
+
+    if not candidates:
+        await callback.message.edit_text(
+            "Нет доступных специалистов для передачи.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⬅️ Назад", callback_data=f"subs_client_back_{client_id}")
+            ]]),
+        )
+        await callback.answer()
+        return
+
+    candidates.sort(key=lambda u: (u.get("name") or "").lower())
+    await state.update_data(
+        transfer_client_id=client_id,
+        transfer_client_name=client_name,
+        transfer_candidates=candidates,
+    )
+
+    buttons = []
+    for i, u in enumerate(candidates):
+        label = u.get("name") or u.get("phone") or f"id={u['id']}"
+        role_label = {"admin": "админ", "methodist": "методист", "specialist": "специалист"}.get(
+            u.get("role"), ""
+        )
+        if role_label:
+            label = f"{label} ({role_label})"
+        if len(label) > 50:
+            label = label[:47] + "…"
+        buttons.append([InlineKeyboardButton(
+            text=label,
+            callback_data=f"subs_transfer_to_{i}",
+        )])
+    buttons.append([InlineKeyboardButton(
+        text="⬅️ Отмена", callback_data=f"subs_client_back_{client_id}",
+    )])
+
+    await callback.message.edit_text(
+        f"🔁 Передать клиента «{client_name}»\n\nКому передаём?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await state.set_state(SubscriptionState.transfer_select_owner)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("subs_transfer_to_"), SubscriptionState.transfer_select_owner)
+async def subs_transfer_to(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение и собственно передача."""
+    idx = int(callback.data.rsplit("_", 1)[-1])
+    user_data = await state.get_data()
+
+    candidates = user_data.get("transfer_candidates") or []
+    if idx >= len(candidates):
+        await callback.answer("Специалист не найден.", show_alert=True)
+        return
+    new_owner = candidates[idx]
+    client_id = user_data.get("transfer_client_id")
+    client_name = user_data.get("transfer_client_name") or "клиент"
+
+    api = BackendAPIClient()
+    try:
+        await api.client_transfer(client_id=client_id, new_owner_id=new_owner["id"])
+    except httpx.HTTPStatusError as e:
+        detail = ""
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            pass
+        await callback.message.edit_text(
+            f"Не удалось передать:\n{detail or e}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⬅️ К клиентам", callback_data="subscriptions_menu")
+            ]]),
+        )
+        await callback.answer()
+        return
+    except Exception as e:
+        logger.exception("client_transfer error")
+        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.answer()
+        return
+
+    new_owner_name = new_owner.get("name") or new_owner.get("phone") or "?"
+    await callback.message.edit_text(
+        f"✅ Клиент «{client_name}» передан специалисту «{new_owner_name}».",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⬅️ К клиентам", callback_data="subscriptions_menu")
+        ]]),
+    )
+    await state.set_state(SubscriptionState.main)
+    await callback.answer("Передан")
+
+
+@router.callback_query(F.data.startswith("subs_client_back_"))
+async def subs_client_back(callback: CallbackQuery, state: FSMContext):
+    """Возврат к карточке клиента из под-экрана (передача и т.д.)."""
+    client_id = int(callback.data.rsplit("_", 1)[-1])
+    user_data = await state.get_data()
+    cache = user_data.get("subs_clients_cache") or []
+    # Найти индекс этого клиента в кэше
+    for i, c in enumerate(cache):
+        if c.get("id") == client_id:
+            # Эмулируем callback subs_client_<i>
+            callback.data = f"subs_client_{i}"
+            await subs_client_picked(callback, state)
+            return
+    # Если кэша нет — возврат к списку
+    await _show_clients_list(callback, state, return_to=None)
+    await callback.answer()

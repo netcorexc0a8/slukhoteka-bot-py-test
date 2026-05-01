@@ -322,10 +322,13 @@ async def schedule_view_date(callback: CallbackQuery, state: FSMContext, date_st
 async def schedule_create_start(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     specialist_id = user_data.get("global_user_id")
+    role = user_data.get("role", "specialist")
 
     try:
         api = BackendAPIClient()
-        clients = await api.clients_get_all(user_id=specialist_id)
+        # admin/methodist видят всех клиентов системы
+        uid = None if role in ("admin", "methodist") else specialist_id
+        clients = await api.clients_get_all(user_id=uid)
     except Exception as e:
         logger.exception("clients fetch error")
         await callback.message.edit_text(f"Ошибка загрузки клиентов: {e}")
