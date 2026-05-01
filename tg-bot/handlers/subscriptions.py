@@ -3,7 +3,7 @@
 
 Поддерживает выдачу 5 типов абонементов:
 - Индивидуальные (диагностика / 1 / 4 / 8 дней) — закрепляются за специалистом
-- Алгоритмика — групповой, требует выбора группы
+- Логоритмика — групповой, требует выбора группы
 
 Используется и из главного меню расписания ("🎫 Абонементы"), и изнутри
 flow создания записи (если у клиента нет нужного абонемента).
@@ -32,7 +32,7 @@ class SubscriptionState(StatesGroup):
     select_client = State()
     client_subscriptions = State()
     issue_select_service = State()
-    issue_select_group = State()  # для алгоритмики — выбор группы
+    issue_select_group = State()  # для логоритмики — выбор группы
     cancel_select_sub = State()
     cancel_confirm = State()
 
@@ -249,7 +249,7 @@ async def subs_issue_pick(callback: CallbackQuery, state: FSMContext):
     await state.update_data(subs_issue_service_id=service_id, subs_issue_service=service)
 
     if service.get("is_group"):
-        # Алгоритмика — нужен выбор группы
+        # Логоритмика — нужен выбор группы
         await _show_groups_for_issue(callback, state)
     else:
         # Индивидуальный — создаём сразу

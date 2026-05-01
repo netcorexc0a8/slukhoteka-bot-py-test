@@ -196,7 +196,7 @@ async def grp_create_name(message: Message, state: FSMContext):
         return
     await state.update_data(new_group_name=name)
 
-    # Выбор услуги — все групповые из справочника (Алгоритмика, Чтение, …)
+    # Выбор услуги — все групповые из справочника (Логоритмика, Чтение, …)
     try:
         api = BackendAPIClient()
         services = await api.services_list()
