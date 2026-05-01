@@ -70,11 +70,15 @@ class BackendAPIClient:
     # ------------------------------------------------------------------
     # CLIENTS
     # ------------------------------------------------------------------
-    async def clients_get_all(self, user_id: int) -> List[Dict[str, Any]]:
+    async def clients_get_all(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """user_id=None → все клиенты системы (для admin/methodist)."""
+        params: Dict[str, Any] = {}
+        if user_id is not None:
+            params["user_id"] = user_id
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/api/v1/clients",
-                params={"user_id": user_id},
+                params=params,
             )
             response.raise_for_status()
             return response.json()
@@ -89,6 +93,23 @@ class BackendAPIClient:
             response = await client.post(
                 f"{self.base_url}/api/v1/clients",
                 json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def client_can_transfer(self, client_id: int) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v1/clients/{client_id}/can-transfer",
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def client_transfer(self, client_id: int, new_owner_id: int) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/clients/{client_id}/transfer",
+                json={"new_owner_id": new_owner_id},
             )
             response.raise_for_status()
             return response.json()
