@@ -7,4 +7,5 @@ tests/vk_test_bot.py
 data/postgres/
 README_*.md
 *_patch_005.md
-.pyc
+__pycache__/
+*.py[cod]
