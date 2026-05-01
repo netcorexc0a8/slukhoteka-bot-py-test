@@ -5,6 +5,7 @@ from config import settings
 from handlers import (
     auth, menu, schedule, subscriptions, groups, group_session, group_move,
     users, statistics, export, export_ics, sync, backup, help as help_handler,
+    clients,
 )
 from services.api_client import BackendAPIClient
 from middlewares.auth_middleware import AuthMiddleware
@@ -36,6 +37,7 @@ dp.include_router(backup.router)
 # в schedule живёт общий calendar_callback, который переадресует
 # нужные case'ы по строковому имени состояния.
 dp.include_router(subscriptions.router)
+dp.include_router(clients.router)
 dp.include_router(groups.router)
 dp.include_router(group_session.router)
 dp.include_router(group_move.router)

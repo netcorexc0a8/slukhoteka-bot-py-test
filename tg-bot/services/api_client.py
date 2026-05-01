@@ -71,10 +71,7 @@ class BackendAPIClient:
     # CLIENTS
     # ------------------------------------------------------------------
     async def clients_get_all(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """
-        Если user_id указан — клиенты этого специалиста.
-        Если user_id=None — все клиенты системы (для admin/methodist).
-        """
+        """user_id=None → все клиенты системы (для admin/methodist)."""
         params: Dict[str, Any] = {}
         if user_id is not None:
             params["user_id"] = user_id
@@ -101,7 +98,6 @@ class BackendAPIClient:
             return response.json()
 
     async def client_can_transfer(self, client_id: int) -> Dict[str, Any]:
-        """Возвращает {"can_transfer": bool, "reason": str}"""
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/api/v1/clients/{client_id}/can-transfer",

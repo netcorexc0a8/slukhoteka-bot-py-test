@@ -125,7 +125,8 @@ async def cmd_schedule(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="📋 Посмотреть расписание", callback_data="schedule_view")],
         [InlineKeyboardButton(text="➕ Создать запись", callback_data="schedule_create_hub")],
         [InlineKeyboardButton(text="✏️ Изменить запись", callback_data="schedule_edit_hub")],
-        [InlineKeyboardButton(text="🎫 Абонементы клиентов", callback_data="subscriptions_menu")],
+        [InlineKeyboardButton(text="👤 Клиенты", callback_data="clients_menu")],
+        [InlineKeyboardButton(text="🎫 Абонементы", callback_data="subscriptions_menu")],
         [InlineKeyboardButton(text="👥 Группы", callback_data="groups_menu")],
         [InlineKeyboardButton(text="ℹ️ Справка", callback_data="schedule_help")],
         [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="schedule_back")],
@@ -326,7 +327,6 @@ async def schedule_create_start(callback: CallbackQuery, state: FSMContext):
 
     try:
         api = BackendAPIClient()
-        # admin/methodist видят всех клиентов системы
         uid = None if role in ("admin", "methodist") else specialist_id
         clients = await api.clients_get_all(user_id=uid)
     except Exception as e:
