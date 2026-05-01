@@ -8,3 +8,4 @@ data/postgres/
 README_*.md
 *_patch_005.md
 .pyc
+.kilo
