@@ -9,3 +9,4 @@ README_*.md
 *_patch_005.md
 __pycache__/
 *.py[cod]
+.kilo
