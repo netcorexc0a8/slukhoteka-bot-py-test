@@ -125,7 +125,8 @@ async def cmd_schedule(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="📋 Посмотреть расписание", callback_data="schedule_view")],
         [InlineKeyboardButton(text="➕ Создать запись", callback_data="schedule_create_hub")],
         [InlineKeyboardButton(text="✏️ Изменить запись", callback_data="schedule_edit_hub")],
-        [InlineKeyboardButton(text="🎫 Абонементы клиентов", callback_data="subscriptions_menu")],
+        [InlineKeyboardButton(text="👤 Клиенты", callback_data="clients_menu")],
+        [InlineKeyboardButton(text="🎫 Абонементы", callback_data="subscriptions_menu")],
         [InlineKeyboardButton(text="👥 Группы", callback_data="groups_menu")],
         [InlineKeyboardButton(text="ℹ️ Справка", callback_data="schedule_help")],
         [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="schedule_back")],
@@ -215,8 +216,9 @@ async def schedule_view_date(callback: CallbackQuery, state: FSMContext, date_st
             await state.set_state(ScheduleState.viewing)
             return
 
-        # Группируем брони по start_time + group_id, чтобы групповые занятия
-        # отображались одной строкой "10:00 — Группа Среда (3 чел.)"
+        # Группируем брони по start_time + group_id для групповых занятий.
+        # Каждое групповое занятие показывается заголовком (время + группа + кол-во),
+        # под ним — клиенты с прогрессом каждого.
         groups_buckets = {}
         individuals = []
         for b in bookings:
@@ -226,44 +228,76 @@ async def schedule_view_date(callback: CallbackQuery, state: FSMContext, date_st
             else:
                 individuals.append(b)
 
+        # Сортируем все события по времени для общего хронологического порядка
+        events = []  # list of (start_time, kind, payload)
+        for b in individuals:
+            events.append((b["start_time"], "individual", b))
+        for key, items in groups_buckets.items():
+            events.append((key[0], "group", items))
+        events.sort(key=lambda e: e[0])
+
         lines = [title, ""]
 
-        # Сначала индивидуальные
-        for b in individuals:
-            time_str = b["start_time"][11:16]
-            client_name = b.get("client_name") or "—"
-            spec_name = b.get("specialist_name") or ""
-            service = b.get("service_name") or ""
-            session_info = ""
-            if b.get("subscription_total"):
-                # Показываем порядковый номер ЭТОГО занятия в абонементе,
-                # а не глобальный счётчик used (он одинаковый у всех записей серии).
-                num = b.get("session_number")
-                total = b["subscription_total"]
-                if num:
-                    session_info = f" [{num}/{total}]"
-                else:
-                    # Историческая запись без session_number
-                    session_info = f" [—/{total}]"
-
-            line = f"• {time_str} — {client_name}"
-            if role != "specialist" and spec_name:
-                line += f" ({spec_name})"
-            if service:
-                line += f" — {service}{session_info}"
-            lines.append(line)
-
-        # Затем групповые
-        for (start_time, _gid), items in groups_buckets.items():
+        for start_time, kind, payload in events:
             time_str = start_time[11:16]
-            sample = items[0]
-            group_name = sample.get("group_name") or "Группа"
-            count = len(items)
-            spec_name = sample.get("specialist_name") or ""
-            line = f"• {time_str} — {group_name} ({count} чел.)"
-            if role != "specialist" and spec_name:
-                line += f" — вёл {spec_name}"
-            lines.append(line)
+
+            if kind == "individual":
+                b = payload
+                client_name = b.get("client_name") or "—"
+                spec_name = b.get("specialist_name") or ""
+                service = b.get("service_name") or ""
+                session_info = ""
+                if b.get("subscription_total"):
+                    num = b.get("session_number")
+                    total = b["subscription_total"]
+                    if num:
+                        session_info = f" [{num}/{total}]"
+                    else:
+                        session_info = f" [—/{total}]"
+
+                line = f"• {time_str} — {client_name}"
+                if role != "specialist" and spec_name:
+                    line += f" ({spec_name})"
+                if service:
+                    line += f" — {service}{session_info}"
+                lines.append(line)
+
+            else:  # group
+                items = payload
+                sample = items[0]
+                group_name = sample.get("group_name") or "Группа"
+                count = len(items)
+                spec_name = sample.get("specialist_name") or ""
+                co_specs = sample.get("co_specialist_names") or []
+                # Со-ведущие (не дублируя основного)
+                co_names = [n for n in co_specs if n and n != spec_name]
+
+                # Заголовок группы — компактный, чтобы влезал на узком экране
+                header = f"• {time_str} — 👥 {group_name} ({count} чел.)"
+                lines.append(header)
+
+                # Ведущие отдельной строкой (если показываем)
+                leaders = []
+                if spec_name:
+                    leaders.append(spec_name)
+                leaders.extend(co_names)
+                if leaders and role != "specialist":
+                    lines.append(f"    👤 {', '.join(leaders)}")
+
+                # Клиенты группы — с отступом.
+                # Услугу не показываем (она у всех одинаковая, видна по группе),
+                # это спасает строку от переноса на узких экранах.
+                for ib in items:
+                    cname = ib.get("client_name") or "—"
+                    progress = ""
+                    if ib.get("subscription_total"):
+                        num = ib.get("session_number")
+                        total = ib["subscription_total"]
+                        if num:
+                            progress = f" [{num}/{total}]"
+                        else:
+                            progress = f" [—/{total}]"
+                    lines.append(f"    └ {cname}{progress}")
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="⬅️ Назад", callback_data="schedule_view")
@@ -289,10 +323,12 @@ async def schedule_view_date(callback: CallbackQuery, state: FSMContext, date_st
 async def schedule_create_start(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     specialist_id = user_data.get("global_user_id")
+    role = user_data.get("role", "specialist")
 
     try:
         api = BackendAPIClient()
-        clients = await api.clients_get_all(user_id=specialist_id)
+        uid = None if role in ("admin", "methodist") else specialist_id
+        clients = await api.clients_get_all(user_id=uid)
     except Exception as e:
         logger.exception("clients fetch error")
         await callback.message.edit_text(f"Ошибка загрузки клиентов: {e}")
@@ -692,7 +728,13 @@ async def sched_recurring_yes(callback: CallbackQuery, state: FSMContext):
     if created:
         lines.append("")
         for b in created[:8]:
-            lines.append(f"  • {b['start_time'][:10]} {b['start_time'][11:16]}")
+            try:
+                d = datetime.strptime(b["start_time"][:10], "%Y-%m-%d")
+                wd = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][d.weekday()]
+                date_label = f"{d.strftime('%d.%m.%Y')} ({wd})"
+            except Exception:
+                date_label = b["start_time"][:10]
+            lines.append(f"  • {date_label} {b['start_time'][11:16]}")
         if len(created) > 8:
             lines.append(f"  …и ещё {len(created) - 8}")
     if failed:

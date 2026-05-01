@@ -152,9 +152,18 @@ class ExcelExportService:
 
         per_specialist = defaultdict(list)
         for b in bookings:
-            if b.specialist:
-                name = b.specialist.name or b.specialist.phone
-                per_specialist[name].append(b)
+            if b.booking_type == BookingType.GROUP:
+                # Для групповых: добавить на листы всех ведущих
+                all_leaders = [b.specialist] + list(b.co_specialists or [])
+                for leader in all_leaders:
+                    if leader:
+                        name = leader.name or leader.phone
+                        per_specialist[name].append(b)
+            else:
+                # Для индивидуальных: только основной специалист
+                if b.specialist:
+                    name = b.specialist.name or b.specialist.phone
+                    per_specialist[name].append(b)
         for name, items in per_specialist.items():
             ws_spec = wb.create_sheet(name[:31])
             self._write_sheet(ws_spec, items, db)

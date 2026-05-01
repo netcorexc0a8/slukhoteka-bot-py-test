@@ -9,6 +9,7 @@
 flow создания записи (если у клиента нет нужного абонемента).
 """
 import logging
+from datetime import datetime
 
 import httpx
 from aiogram import F, Router
@@ -52,10 +53,12 @@ async def subscriptions_menu(callback: CallbackQuery, state: FSMContext):
 async def _show_clients_list(callback: CallbackQuery, state: FSMContext, return_to: str | None):
     user_data = await state.get_data()
     specialist_id = user_data.get("global_user_id")
+    role = user_data.get("role", "specialist")
 
     try:
         api = BackendAPIClient()
-        clients = await api.clients_get_all(user_id=specialist_id)
+        uid = None if role in ("admin", "methodist") else specialist_id
+        clients = await api.clients_get_all(user_id=uid)
     except Exception as e:
         logger.exception("subs: clients fetch error")
         await callback.message.edit_text(f"Ошибка загрузки клиентов: {e}")
@@ -138,6 +141,13 @@ async def _show_subs_for_client(callback: CallbackQuery, state: FSMContext):
             total = s.get("total_sessions", 0)
             spec = s.get("assigned_specialist_name") or ""
             group = s.get("group_name") or ""
+            purchased = (s.get("purchased_at") or "")[:10]
+            # YYYY-MM-DD → DD.MM.YYYY
+            try:
+                purchased_human = datetime.strptime(purchased, "%Y-%m-%d").strftime("%d.%m.%Y")
+            except Exception:
+                purchased_human = purchased
+
             status_emoji = {
                 "active": "🟢", "completed": "✅", "expired": "⏰", "cancelled": "⛔",
             }.get(status, "•")
@@ -146,6 +156,8 @@ async def _show_subs_for_client(callback: CallbackQuery, state: FSMContext):
                 line += f" — 👥 {group}"
             elif spec:
                 line += f" — {spec}"
+            if purchased_human:
+                line += f" (от {purchased_human})"
             lines.append(line)
 
     text = "\n".join(lines)

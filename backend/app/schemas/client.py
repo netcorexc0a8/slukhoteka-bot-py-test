@@ -16,6 +16,12 @@ class ClientUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
     is_active: Optional[bool] = None
+    global_user_id: Optional[int] = None  # для передачи клиента другому специалисту
+
+
+class ClientTransferRequest(BaseModel):
+    """Передача клиента другому специалисту."""
+    new_owner_id: int
 
 
 class ClientResponse(ClientBase):
