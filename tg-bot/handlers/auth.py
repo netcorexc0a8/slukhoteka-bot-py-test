@@ -80,6 +80,11 @@ async def process_phone_input(message: Message, state: FSMContext, api_client: "
     if message.contact:
         await message.delete()
 
+    # Защита от слишком длинного ввода (контакт всегда безопасен)
+    if not message.contact and message.text and len(message.text) > 20:
+        await message.answer("Номер телефона слишком длинный. Используйте кнопку '📱 Поделиться номером' или введите номер в формате +7XXXXXXXXXX")
+        return
+
     user_name = None
     if message.contact:
         contact: Contact = message.contact

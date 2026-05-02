@@ -3,6 +3,7 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from services.api_client import BackendAPIClient
 import logging
+from utils.errors import friendly_error
 from datetime import datetime, timedelta
 from utils.dt import now as dt_now
 
@@ -51,4 +52,4 @@ async def cmd_sync(message: Message, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error syncing to Yandex Disk: {e}")
-        await message.answer(f"Ошибка синхронизации: {e}")
+        await message.answer(friendly_error(e, "sync"))

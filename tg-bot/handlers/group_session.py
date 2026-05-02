@@ -1,5 +1,5 @@
 """
-Создание группового занятия (логоритмика).
+Создание группового занятия (алгоритмика).
 
 Поток:
   «📅 Расписание» → «➕ Создать групповое занятие»
@@ -12,12 +12,13 @@
 
 Логика проверок (на стороне backend):
   - Каждая бронь должна быть привязана к абонементу клиента (logorhythmics).
-  - Если у клиента нет активного абонемента «Логоритмика» с привязкой к этой
+  - Если у клиента нет активного абонемента «Алгоритмика» с привязкой к этой
     группе — бот покажет это в списке отметки и не даст пометить участника.
   - Weekly limit (раз в неделю) — backend проверит при создании.
 """
 import asyncio
 import logging
+from utils.errors import friendly_error
 from datetime import datetime, timedelta
 from utils.dt import now as dt_now
 
@@ -103,7 +104,7 @@ async def gs_start(callback: CallbackQuery, state: FSMContext):
         groups = await api.groups_list()
     except Exception as e:
         logger.exception("groups_list error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_session"))
         await callback.answer()
         return
 
@@ -227,7 +228,7 @@ async def gs_show_time_slots(callback: CallbackQuery, state: FSMContext):
         await state.set_state(GroupSessionState.select_time)
     except Exception as e:
         logger.exception("gs time slots error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_session"))
 
 
 @router.callback_query(F.data == "gs_back_to_date", GroupSessionState.select_time)
@@ -272,7 +273,7 @@ async def _show_attendees(callback: CallbackQuery, state: FSMContext, init: bool
         group = await api.group_get(group_id)
     except Exception as e:
         logger.exception("group_get error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_session"))
         return
 
     participants = [p for p in (group.get("participants") or []) if p.get("is_active")]
@@ -394,10 +395,10 @@ async def _show_co_specs(callback: CallbackQuery, state: FSMContext, init: bool 
     api = BackendAPIClient()
     try:
         users_resp = await api.users_get_all(limit=200)
-        users = users_resp if isinstance(users_resp, list) else users_resp.get("users", [])
+        users = users_resp  # users_get_all теперь всегда возвращает список
     except Exception as e:
         logger.exception("users_get_all error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_session"))
         return
 
     # Только специалисты/методисты/админы могут быть ведущими — все остальные не подходят

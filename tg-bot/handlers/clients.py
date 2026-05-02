@@ -15,6 +15,7 @@
   [⬅️ Назад]
 """
 import logging
+from utils.errors import friendly_error
 from datetime import datetime
 from utils.dt import now as dt_now
 from typing import Optional
@@ -62,7 +63,7 @@ async def _show_clients_list(callback: CallbackQuery, state: FSMContext):
         clients = await api.clients_get_all(user_id=uid)
     except Exception as e:
         logger.exception("clients list error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "clients"))
         return
 
     clients = [c for c in clients if not c.get("deleted_at")]
@@ -275,7 +276,7 @@ async def cl_transfer_start(callback: CallbackQuery, state: FSMContext):
         check = await api.client_can_transfer(client_id)
     except Exception as e:
         logger.exception("can_transfer error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "clients"))
         await callback.answer()
         return
 
@@ -293,7 +294,7 @@ async def cl_transfer_start(callback: CallbackQuery, state: FSMContext):
         users = await api.users_get_all()
     except Exception as e:
         logger.exception("users_get_all error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "clients"))
         await callback.answer()
         return
 
@@ -377,7 +378,7 @@ async def cl_transfer_to(callback: CallbackQuery, state: FSMContext):
         return
     except Exception as e:
         logger.exception("client_transfer error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "clients"))
         await callback.answer()
         return
 

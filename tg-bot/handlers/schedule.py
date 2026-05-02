@@ -10,6 +10,7 @@
   👥 Группы                   — handlers/groups.py
 """
 import logging
+from utils.errors import friendly_error
 from datetime import datetime, timedelta
 from utils.dt import now as dt_now
 
@@ -50,7 +51,7 @@ def _service_short_label(service_type: str) -> str:
         "subscription_1": "Абонемент 1",
         "subscription_4": "Абонемент 4",
         "subscription_8": "Абонемент 8",
-        "logorhythmics": "Логоритмика",
+        "logorhythmics": "Алгоритмика",
     }.get(service_type, service_type)
 
 
@@ -310,7 +311,7 @@ async def schedule_view_date(callback: CallbackQuery, state: FSMContext, date_st
     except Exception as e:
         logger.exception("schedule_view_date error")
         await callback.message.edit_text(
-            f"Ошибка загрузки расписания: {e}",
+            friendly_error(e, "schedule"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="⬅️ Назад", callback_data="schedule_view")
             ]]),
@@ -333,7 +334,7 @@ async def schedule_create_start(callback: CallbackQuery, state: FSMContext):
         clients = await api.clients_get_all(user_id=uid)
     except Exception as e:
         logger.exception("clients fetch error")
-        await callback.message.edit_text(f"Ошибка загрузки клиентов: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 
@@ -438,7 +439,7 @@ async def schedule_create_new_client_phone(message: Message, state: FSMContext):
         return
     except Exception as e:
         logger.exception("client_create error")
-        await message.answer(f"Ошибка: {e}")
+        await message.answer(friendly_error(e, "schedule"))
         return
 
     await state.update_data(
@@ -477,7 +478,7 @@ async def _show_subscriptions_for_create(callback, state: FSMContext):
                 or user_data.get("role") in ("admin", "methodist")]
     except Exception as e:
         logger.exception("subscriptions fetch error")
-        await callback.message.edit_text(f"Ошибка загрузки абонементов: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         return
 
     buttons = []
@@ -575,7 +576,7 @@ async def _show_time_slots(callback: CallbackQuery, state: FSMContext):
         await state.set_state(ScheduleState.create_select_time)
     except Exception as e:
         logger.exception("time slots error")
-        await callback.message.edit_text(f"Ошибка загрузки слотов: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
 
 
 @router.callback_query(F.data == "sched_back_to_date", ScheduleState.create_select_time)
@@ -625,7 +626,7 @@ async def schedule_create_time_picked(callback: CallbackQuery, state: FSMContext
         return
     except Exception as e:
         logger.exception("booking_create error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 
@@ -699,7 +700,7 @@ async def sched_recurring_yes(callback: CallbackQuery, state: FSMContext):
         await api.booking_delete(booking_id=first_id, actor_id=actor_id)
     except Exception as e:
         logger.exception("booking_delete (pre-recurring) error")
-        await callback.message.edit_text(f"Ошибка при подготовке серии: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 
@@ -719,7 +720,7 @@ async def sched_recurring_yes(callback: CallbackQuery, state: FSMContext):
         return
     except Exception as e:
         logger.exception("booking_create_recurring error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 
@@ -787,7 +788,7 @@ async def schedule_delete_select_booking(callback: CallbackQuery, state: FSMCont
         bookings.sort(key=lambda b: b["start_time"])
     except Exception as e:
         logger.exception("delete list error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         return
 
     if not bookings:
@@ -856,7 +857,7 @@ async def schedule_delete_confirm(callback: CallbackQuery, state: FSMContext):
         ok = await api.booking_delete(booking_id=booking_id, actor_id=actor_id)
     except Exception as e:
         logger.exception("booking_delete error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 
@@ -907,7 +908,7 @@ async def schedule_move_pick_booking(callback: CallbackQuery, state: FSMContext,
         bookings.sort(key=lambda b: b["start_time"])
     except Exception as e:
         logger.exception("move list error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         return
 
     if not bookings:
@@ -995,7 +996,7 @@ async def _show_move_time_slots(callback: CallbackQuery, state: FSMContext):
         await state.set_state(ScheduleState.move_select_time)
     except Exception as e:
         logger.exception("move time slots error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
 
 
 @router.callback_query(F.data == "sched_move_back_to_date", ScheduleState.move_select_time)
@@ -1039,7 +1040,7 @@ async def sched_move_time_picked(callback: CallbackQuery, state: FSMContext):
         return
     except Exception as e:
         logger.exception("booking_update (move) error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 

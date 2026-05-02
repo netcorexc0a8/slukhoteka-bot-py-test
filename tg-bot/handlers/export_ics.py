@@ -57,7 +57,7 @@ async def cmd_export_ics(message: Message, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error exporting ICS: {e}")
-        await message.answer(f"Ошибка экспорта ICS: {e}")
+        await message.answer(friendly_error(e, "export_ics"))
 
 
 def _ics_escape(s: str) -> str:

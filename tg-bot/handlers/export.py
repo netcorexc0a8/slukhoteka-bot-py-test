@@ -7,6 +7,7 @@ from services.api_client import BackendAPIClient
 from datetime import datetime, timedelta
 from utils.dt import now as dt_now
 import logging
+from utils.errors import friendly_error
 import io
 import os
 
@@ -94,7 +95,7 @@ async def export_current_month(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error exporting Excel: {e}")
-        await callback.message.edit_text(f"Ошибка экспорта: {e}")
+        await callback.message.edit_text(friendly_error(e, "export"))
         await callback.answer()
 
 @router.callback_query(F.data == "export_select_month")
@@ -171,5 +172,5 @@ async def export_month_selected(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error exporting Excel: {e}")
-        await callback.message.edit_text(f"Ошибка экспорта: {e}")
+        await callback.message.edit_text(friendly_error(e, "export"))
         await callback.answer()

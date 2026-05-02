@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from utils.dt import now as dt_now
 from collections import defaultdict
 import logging
+from utils.errors import friendly_error
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -26,8 +27,8 @@ async def cmd_statistics(message: Message, state: FSMContext):
     try:
         api_client = BackendAPIClient()
         users_resp = await api_client.users_get_all()
-        # users_get_all может возвращать либо список, либо dict с "users"
-        users = users_resp if isinstance(users_resp, list) else users_resp.get("users", [])
+        # users_get_all теперь всегда возвращает список (исправлено в api_client.py)
+        users = users_resp
 
         today = dt_now()
         first_day = today.replace(day=1)
@@ -113,7 +114,7 @@ async def cmd_statistics(message: Message, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error loading statistics: {e}")
-        await message.answer(f"Ошибка загрузки статистики: {e}")
+        await message.answer(friendly_error(e, "statistics"))
 
 
 @router.callback_query(F.data == "stats_back")

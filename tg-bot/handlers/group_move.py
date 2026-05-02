@@ -14,6 +14,7 @@ Reuse: общий calendar_callback в schedule.py перенаправляет 
 в этот хендлер по строковому имени состояния.
 """
 import logging
+from utils.errors import friendly_error
 from datetime import datetime, timedelta
 from utils.dt import now as dt_now
 
@@ -61,7 +62,7 @@ async def gm_start(callback: CallbackQuery, state: FSMContext):
         groups = await api.groups_list()
     except Exception as e:
         logger.exception("groups_list error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_move"))
         await callback.answer()
         return
 
@@ -130,7 +131,7 @@ async def gm_after_old_date(callback: CallbackQuery, state: FSMContext, date_str
         bookings = await api.bookings_for_date(date=date_str)
     except Exception as e:
         logger.exception("bookings_for_date error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_move"))
         return
 
     # Только групповые брони этой группы
@@ -283,7 +284,7 @@ async def gm_time_picked(callback: CallbackQuery, state: FSMContext):
         return
     except Exception as e:
         logger.exception("booking_group_move error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_move"))
         await callback.answer()
         return
 
