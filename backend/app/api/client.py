@@ -32,13 +32,33 @@ def get_clients(
 
 @router.post("", response_model=ClientResponse, status_code=status.HTTP_201_CREATED)
 def create_client_endpoint(client: ClientCreate, db: Session = Depends(get_db)):
-    if client.phone:  # дубль по телефону — проверяем только если phone не пустой
+    if client.phone and not client.phone.startswith("manual:"):
+        # Дубль по телефону в рамках специалиста
         existing_client = get_client_by_phone(db, client.phone, client.global_user_id)
         if existing_client:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Клиент с таким номером телефона уже существует",
             )
+    else:
+        # Нет телефона — проверяем дубль по имени (без учёта регистра)
+        from app.models.client import Client
+        name_lower = (client.name or "").strip().lower()
+        if name_lower:
+            existing_by_name = (
+                db.query(Client)
+                .filter(
+                    Client.global_user_id == client.global_user_id,
+                    Client.deleted_at.is_(None),
+                )
+                .all()
+            )
+            for c in existing_by_name:
+                if (c.name or "").strip().lower() == name_lower:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Клиент с именем «{client.name}» уже существует",
+                    )
     return create_client(db, client)
 
 

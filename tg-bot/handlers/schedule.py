@@ -477,7 +477,18 @@ async def schedule_create_new_client_phone(message: Message, state: FSMContext):
             detail = e.response.json().get("detail", "")
         except Exception:
             pass
-        await message.answer(f"Не удалось создать клиента: {detail or e}")
+        if e.response.status_code == 400 and detail:
+            # Понятная ошибка — дубль по имени или телефону
+            await message.answer(
+                f"⚠️ {detail}\n\n"
+                f"Введите другое имя или телефон, либо выберите существующего клиента из списка:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="⬅️ К списку клиентов", callback_data="schedule_create")
+                ]]),
+            )
+        else:
+            from utils.errors import friendly_error
+            await message.answer(friendly_error(e, "client_create"))
         return
     except Exception as e:
         logger.exception("client_create error")
