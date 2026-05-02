@@ -84,7 +84,8 @@ async def _show_groups_list(callback: CallbackQuery, state: FSMContext):
                 day_idx = g["day_of_week"]
                 if 0 <= day_idx < 7:
                     schedule_hint = f" — {DAY_NAMES_SHORT[day_idx]} {g['time']}"
-            lines.append(f"• {g.get('name', '?')} ({active_count} уч.){schedule_hint}")
+            service_label = f" [{g['service_name']}]" if g.get("service_name") else ""
+            lines.append(f"• {g.get('name', '?')}{service_label} ({active_count} уч.){schedule_hint}")
         text = "\n".join(lines)
 
     buttons = []
@@ -138,6 +139,7 @@ async def _show_group_detail(callback: CallbackQuery, state: FSMContext):
 
     name = group.get("name", "")
     max_part = group.get("max_participants", 6)
+    service_name = group.get("service_name") or "—"
     participants = [p for p in (group.get("participants") or []) if p.get("is_active")]
 
     schedule_hint = "—"
@@ -148,6 +150,7 @@ async def _show_group_detail(callback: CallbackQuery, state: FSMContext):
 
     lines = [
         f"👥 Группа «{name}»",
+        f"Тип: {service_name}",
         f"Расписание: {schedule_hint}",
         f"Участники: {len(participants)}/{max_part}",
         "",

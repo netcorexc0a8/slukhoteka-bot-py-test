@@ -32,6 +32,7 @@ def _to_response(group) -> GroupResponse:
         id=group.id,
         name=group.name,
         service_id=group.service_id,
+        service_name=group.service.name if group.service else None,
         max_participants=group.max_participants,
         day_of_week=group.day_of_week,
         time=group.time,
