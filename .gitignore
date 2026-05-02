@@ -10,3 +10,4 @@ README_*.md
 __pycache__/
 *.py[cod]
 .kilo
+docker-compose.yml
