@@ -2,7 +2,6 @@ from aiogram import BaseMiddleware
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from typing import Callable, Dict, Any, Awaitable
-from services.api_client import BackendAPIClient
 from handlers.auth import AuthState
 import logging
 
@@ -29,8 +28,13 @@ class AuthMiddleware(BaseMiddleware):
             # Уже авторизован, пропускаем
             return await handler(event, data)
 
-        # Проверяем авторизацию через API
-        api_client = BackendAPIClient()
+        # Берём клиент из DI, не создаём новый
+        api_client = data.get("api_client")
+        if api_client is None:
+            # Fallback: на случай если DI не настроен
+            from services.api_client import BackendAPIClient
+            api_client = BackendAPIClient()
+
         auth_result = await api_client.auth_check(
             platform="telegram",
             external_id=str(event.from_user.id)
@@ -47,7 +51,6 @@ class AuthMiddleware(BaseMiddleware):
             )
             await state.set_state(AuthState.authorized)
         else:
-            # Не авторизован, но не прерываем, пусть /start обработает
             logger.info(f"User {event.from_user.id} not authorized, letting /start handle")
 
         return await handler(event, data)

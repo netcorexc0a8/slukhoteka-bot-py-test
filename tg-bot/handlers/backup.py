@@ -4,11 +4,12 @@ from aiogram.fsm.context import FSMContext
 from services.api_client import BackendAPIClient
 import logging
 from datetime import datetime
+from utils.dt import now as dt_now
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-@router.message(F.text == "💾 Резервная копия БД")
+@router.message(F.text == "💾 Резерв. копия БД")
 async def cmd_backup(message: Message, state: FSMContext):
     data = await state.get_data()
     role = data.get("role", "specialist")
@@ -32,14 +33,15 @@ async def cmd_backup(message: Message, state: FSMContext):
 
         file = BufferedInputFile(
             file=backup_data,
-            filename=f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"
+            filename=f"backup_{dt_now().strftime('%Y%m%d_%H%M%S')}.sql"
         )
 
         await message.answer_document(
             document=file,
-            caption=f"💾 Резервная копия базы данных от {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+            caption=f"💾 Резервная копия базы данных от {dt_now().strftime('%d.%m.%Y %H:%M')}"
         )
 
     except Exception as e:
         logger.error(f"Error creating backup: {e}")
-        await message.answer(f"Ошибка создания резервной копии: {e}")
+        from utils.errors import friendly_error
+        await message.answer(f"❌ {friendly_error(e, 'backup')}")

@@ -10,7 +10,9 @@
   👥 Группы                   — handlers/groups.py
 """
 import logging
+from utils.errors import friendly_error
 from datetime import datetime, timedelta
+from utils.dt import now as dt_now
 
 import httpx
 from aiogram import F, Router
@@ -104,6 +106,7 @@ class ScheduleState(StatesGroup):
 
     delete_select_date = State()
     delete_select_booking = State()
+    delete_confirm = State()
 
     # Перенос индивидуальной брони (отдельный пункт меню)
     move_pick_old_date = State()  # выбираем дату, на которой стоит запись
@@ -184,7 +187,7 @@ async def schedule_back(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "schedule_view")
 async def schedule_view_start(callback: CallbackQuery, state: FSMContext):
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await _show_calendar(callback, state, "Выберите дату для просмотра:", today.year, today.month)
     await state.set_state(ScheduleState.view_select_date)
@@ -308,7 +311,7 @@ async def schedule_view_date(callback: CallbackQuery, state: FSMContext, date_st
     except Exception as e:
         logger.exception("schedule_view_date error")
         await callback.message.edit_text(
-            f"Ошибка загрузки расписания: {e}",
+            friendly_error(e, "schedule"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="⬅️ Назад", callback_data="schedule_view")
             ]]),
@@ -331,32 +334,68 @@ async def schedule_create_start(callback: CallbackQuery, state: FSMContext):
         clients = await api.clients_get_all(user_id=uid)
     except Exception as e:
         logger.exception("clients fetch error")
-        await callback.message.edit_text(f"Ошибка загрузки клиентов: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 
     clients = [c for c in clients if not c.get("deleted_at")]
     clients.sort(key=lambda c: (c.get("name") or "").lower())
-
     await state.update_data(create_clients_cache=clients)
+    await _show_create_clients_page(callback, state, page=0)
+
+
+_CREATE_PAGE_SIZE = 10
+
+
+async def _show_create_clients_page(callback: CallbackQuery, state: FSMContext, page: int = 0):
+    user_data = await state.get_data()
+    clients = user_data.get("create_clients_cache") or []
+
+    if not clients:
+        buttons = [
+            [InlineKeyboardButton(text="➕ Новый клиент", callback_data="sched_create_new_client")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="sched_back_to_main")],
+        ]
+        await callback.message.edit_text(
+            "У вас пока нет клиентов. Создайте первого:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+        await state.set_state(ScheduleState.create_select_client)
+        await callback.answer()
+        return
+
+    total = len(clients)
+    total_pages = max(1, (total + _CREATE_PAGE_SIZE - 1) // _CREATE_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    page_clients = clients[page * _CREATE_PAGE_SIZE : (page + 1) * _CREATE_PAGE_SIZE]
 
     buttons = []
-    for i, c in enumerate(clients):
+    for c in page_clients:
+        global_idx = clients.index(c)
         label = c.get("name", "Без имени")
         if len(label) > 50:
             label = label[:47] + "…"
         buttons.append([InlineKeyboardButton(
             text=label,
-            callback_data=f"sched_create_client_{i}",
+            callback_data=f"sched_create_client_{global_idx}",
         )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"sched_create_page_{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"sched_create_page_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
     buttons.append([InlineKeyboardButton(text="➕ Новый клиент", callback_data="sched_create_new_client")])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="sched_back_to_main")])
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    msg = "Выберите клиента:"
-    if not clients:
-        msg = "У вас пока нет клиентов. Создайте первого:"
-    await callback.message.edit_text(msg, reply_markup=keyboard)
+    page_label = f" (стр. {page + 1}/{total_pages})" if total_pages > 1 else ""
+    await callback.message.edit_text(
+        f"Выберите клиента{page_label}:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
     await state.set_state(ScheduleState.create_select_client)
     await callback.answer()
 
@@ -366,6 +405,12 @@ async def sched_back_to_main(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
     await cmd_schedule(callback.message, state)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sched_create_page_"), ScheduleState.create_select_client)
+async def schedule_create_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split("_")[-1])
+    await _show_create_clients_page(callback, state, page=page)
 
 
 @router.callback_query(F.data.startswith("sched_create_client_"), ScheduleState.create_select_client)
@@ -419,7 +464,7 @@ async def schedule_create_new_client_phone(message: Message, state: FSMContext):
     specialist_id = user_data.get("global_user_id")
 
     if phone_raw == "-" or not phone_raw:
-        phone = f"manual:{specialist_id}:{int(datetime.now().timestamp())}"
+        phone = f"manual:{specialist_id}:{int(dt_now().timestamp())}"
     else:
         phone = phone_raw
 
@@ -432,11 +477,22 @@ async def schedule_create_new_client_phone(message: Message, state: FSMContext):
             detail = e.response.json().get("detail", "")
         except Exception:
             pass
-        await message.answer(f"Не удалось создать клиента: {detail or e}")
+        if e.response.status_code == 400 and detail:
+            # Понятная ошибка — дубль по имени или телефону
+            await message.answer(
+                f"⚠️ {detail}\n\n"
+                f"Введите другое имя или телефон, либо выберите существующего клиента из списка:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="⬅️ К списку клиентов", callback_data="schedule_create")
+                ]]),
+            )
+        else:
+            from utils.errors import friendly_error
+            await message.answer(friendly_error(e, "client_create"))
         return
     except Exception as e:
         logger.exception("client_create error")
-        await message.answer(f"Ошибка: {e}")
+        await message.answer(friendly_error(e, "schedule"))
         return
 
     await state.update_data(
@@ -475,7 +531,7 @@ async def _show_subscriptions_for_create(callback, state: FSMContext):
                 or user_data.get("role") in ("admin", "methodist")]
     except Exception as e:
         logger.exception("subscriptions fetch error")
-        await callback.message.edit_text(f"Ошибка загрузки абонементов: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         return
 
     buttons = []
@@ -511,7 +567,7 @@ async def schedule_create_sub_picked(callback: CallbackQuery, state: FSMContext)
     sub_id = int(callback.data.rsplit("_", 1)[-1])
     await state.update_data(create_subscription_id=sub_id)
 
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await _show_calendar(callback, state, "Выберите дату:", today.year, today.month)
     await state.set_state(ScheduleState.create_select_date)
@@ -573,14 +629,14 @@ async def _show_time_slots(callback: CallbackQuery, state: FSMContext):
         await state.set_state(ScheduleState.create_select_time)
     except Exception as e:
         logger.exception("time slots error")
-        await callback.message.edit_text(f"Ошибка загрузки слотов: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
 
 
 @router.callback_query(F.data == "sched_back_to_date", ScheduleState.create_select_time)
 async def sched_back_to_date(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
-    year = user_data.get("calendar_year", datetime.now().year)
-    month = user_data.get("calendar_month", datetime.now().month)
+    year = user_data.get("calendar_year", dt_now().year)
+    month = user_data.get("calendar_month", dt_now().month)
     await _show_calendar(callback, state, "Выберите дату:", year, month)
     await state.set_state(ScheduleState.create_select_date)
     await callback.answer()
@@ -623,7 +679,7 @@ async def schedule_create_time_picked(callback: CallbackQuery, state: FSMContext
         return
     except Exception as e:
         logger.exception("booking_create error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 
@@ -697,7 +753,7 @@ async def sched_recurring_yes(callback: CallbackQuery, state: FSMContext):
         await api.booking_delete(booking_id=first_id, actor_id=actor_id)
     except Exception as e:
         logger.exception("booking_delete (pre-recurring) error")
-        await callback.message.edit_text(f"Ошибка при подготовке серии: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 
@@ -717,7 +773,7 @@ async def sched_recurring_yes(callback: CallbackQuery, state: FSMContext):
         return
     except Exception as e:
         logger.exception("booking_create_recurring error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 
@@ -763,7 +819,7 @@ async def sched_recurring_yes(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "schedule_delete")
 async def schedule_delete_start(callback: CallbackQuery, state: FSMContext):
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await _show_calendar(callback, state, "Выберите дату записи для удаления:", today.year, today.month)
     await state.set_state(ScheduleState.delete_select_date)
@@ -785,7 +841,7 @@ async def schedule_delete_select_booking(callback: CallbackQuery, state: FSMCont
         bookings.sort(key=lambda b: b["start_time"])
     except Exception as e:
         logger.exception("delete list error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         return
 
     if not bookings:
@@ -823,15 +879,38 @@ async def schedule_delete_select_booking(callback: CallbackQuery, state: FSMCont
 
 @router.callback_query(F.data.startswith("sched_del_pick_"), ScheduleState.delete_select_booking)
 async def schedule_delete_pick(callback: CallbackQuery, state: FSMContext):
-    """Удаление брони сразу, без промежуточного подтверждения."""
+    """Показываем подтверждение перед удалением."""
     booking_id = int(callback.data.rsplit("_", 1)[-1])
-    actor_id = (await state.get_data()).get("global_user_id")
+    await state.update_data(delete_booking_id=booking_id)
+
+    user_data = await state.get_data()
+    date_str = user_data.get("delete_date", "")
+    date_label = _format_date_human(date_str) if date_str else ""
+
+    await callback.message.edit_text(
+        f"🗑️ Удалить запись{' на ' + date_label if date_label else ''}?\n\n"
+        f"Занятие вернётся в абонемент клиента.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data="sched_del_confirm")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="schedule_delete")],
+        ]),
+    )
+    await state.set_state(ScheduleState.delete_confirm)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "sched_del_confirm", ScheduleState.delete_confirm)
+async def schedule_delete_confirm(callback: CallbackQuery, state: FSMContext):
+    """Выполняем удаление после подтверждения."""
+    user_data = await state.get_data()
+    booking_id = user_data.get("delete_booking_id")
+    actor_id = user_data.get("global_user_id")
     try:
         api = BackendAPIClient()
         ok = await api.booking_delete(booking_id=booking_id, actor_id=actor_id)
     except Exception as e:
         logger.exception("booking_delete error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 
@@ -854,7 +933,7 @@ async def schedule_delete_pick(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "schedule_move_individual")
 async def schedule_move_individual_start(callback: CallbackQuery, state: FSMContext):
     """Шаг 1 переноса: выбираем дату записи, которую переносим."""
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await _show_calendar(callback, state, "Выберите дату записи, которую переносим:", today.year, today.month)
     await state.set_state(ScheduleState.move_pick_old_date)
@@ -882,7 +961,7 @@ async def schedule_move_pick_booking(callback: CallbackQuery, state: FSMContext,
         bookings.sort(key=lambda b: b["start_time"])
     except Exception as e:
         logger.exception("move list error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         return
 
     if not bookings:
@@ -920,7 +999,7 @@ async def sched_move_picked(callback: CallbackQuery, state: FSMContext):
     """Шаг 3: запись выбрана — спрашиваем новую дату."""
     booking_id = int(callback.data.rsplit("_", 1)[-1])
     await state.update_data(move_booking_id=booking_id)
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await _show_calendar(callback, state, "Выберите новую дату:", today.year, today.month)
     await state.set_state(ScheduleState.move_select_date)
@@ -970,14 +1049,14 @@ async def _show_move_time_slots(callback: CallbackQuery, state: FSMContext):
         await state.set_state(ScheduleState.move_select_time)
     except Exception as e:
         logger.exception("move time slots error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
 
 
 @router.callback_query(F.data == "sched_move_back_to_date", ScheduleState.move_select_time)
 async def sched_move_back_to_date(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
-    year = user_data.get("calendar_year", datetime.now().year)
-    month = user_data.get("calendar_month", datetime.now().month)
+    year = user_data.get("calendar_year", dt_now().year)
+    month = user_data.get("calendar_month", dt_now().month)
     await _show_calendar(callback, state, "Выберите новую дату:", year, month)
     await state.set_state(ScheduleState.move_select_date)
     await callback.answer()
@@ -1014,7 +1093,7 @@ async def sched_move_time_picked(callback: CallbackQuery, state: FSMContext):
         return
     except Exception as e:
         logger.exception("booking_update (move) error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "schedule"))
         await callback.answer()
         return
 
@@ -1098,8 +1177,8 @@ async def calendar_callback(callback: CallbackQuery, state: FSMContext):
 
     if action in ("prev", "next") and len(parts) > 2 and parts[2] == "month":
         user_data = await state.get_data()
-        year = user_data.get("calendar_year", datetime.now().year)
-        month = user_data.get("calendar_month", datetime.now().month)
+        year = user_data.get("calendar_year", dt_now().year)
+        month = user_data.get("calendar_month", dt_now().month)
         if action == "prev":
             year, month = (year - 1, 12) if month == 1 else (year, month - 1)
         else:
@@ -1114,6 +1193,12 @@ async def calendar_callback(callback: CallbackQuery, state: FSMContext):
             from handlers.group_session import _gs_busy_dates_for_month
             busy = await _gs_busy_dates_for_month(
                 year, month, specialist_id, user_data.get("gs_group_id")
+            )
+        # В group_move flow при выборе старой даты — показываем даты занятий группы.
+        elif current_state and "GroupMoveState" in current_state and "select_old_date" in current_state:
+            from handlers.group_move import _gm_group_dates_for_month
+            busy = await _gm_group_dates_for_month(
+                year, month, user_data.get("gm_group_id", "")
             )
         else:
             busy = await _busy_dates_for_month(

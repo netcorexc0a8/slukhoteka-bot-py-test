@@ -35,6 +35,22 @@ def create_group(db: Session, payload: GroupCreate) -> Group:
         raise InvalidSubscriptionConfig(
             "Группы можно создавать только для групповых услуг (алгоритмика)"
         )
+    # Проверка на дубль по названию (без учёта регистра) среди активных групп
+    existing = (
+        db.query(Group)
+        .filter(
+            Group.deleted_at.is_(None),
+            Group.is_active.is_(True),
+            Group.service_id == payload.service_id,
+        )
+        .all()
+    )
+    name_lower = payload.name.strip().lower()
+    for g in existing:
+        if (g.name or "").strip().lower() == name_lower:
+            raise InvalidSubscriptionConfig(
+                f"Группа с названием «{payload.name}» уже существует"
+            )
     group = Group(
         id=str(uuid.uuid4()),
         name=payload.name,

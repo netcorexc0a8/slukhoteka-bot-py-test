@@ -5,7 +5,9 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from services.api_client import BackendAPIClient
 from datetime import datetime, timedelta
+from utils.dt import now as dt_now
 import logging
+from utils.errors import friendly_error
 import io
 import os
 
@@ -57,7 +59,7 @@ async def export_current_month(callback: CallbackQuery, state: FSMContext):
     current_user_id = user_data.get("global_user_id")
     current_user_role = user_data.get("role", "specialist")
 
-    today = datetime.now()
+    today = dt_now()
     first_day = today.replace(day=1)
     last_day = (first_day + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 
@@ -93,12 +95,12 @@ async def export_current_month(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error exporting Excel: {e}")
-        await callback.message.edit_text(f"Ошибка экспорта: {e}")
+        await callback.message.edit_text(friendly_error(e, "export"))
         await callback.answer()
 
 @router.callback_query(F.data == "export_select_month")
 async def export_select_month(callback: CallbackQuery, state: FSMContext):
-    current_year = datetime.now().year
+    current_year = dt_now().year
     months = []
 
     for month in range(1, 13):
@@ -170,5 +172,5 @@ async def export_month_selected(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error exporting Excel: {e}")
-        await callback.message.edit_text(f"Ошибка экспорта: {e}")
+        await callback.message.edit_text(friendly_error(e, "export"))
         await callback.answer()

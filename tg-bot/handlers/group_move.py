@@ -14,7 +14,9 @@ Reuse: общий calendar_callback в schedule.py перенаправляет 
 в этот хендлер по строковому имени состояния.
 """
 import logging
+from utils.errors import friendly_error
 from datetime import datetime, timedelta
+from utils.dt import now as dt_now
 
 import httpx
 from aiogram import F, Router
@@ -60,7 +62,7 @@ async def gm_start(callback: CallbackQuery, state: FSMContext):
         groups = await api.groups_list()
     except Exception as e:
         logger.exception("groups_list error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_move"))
         await callback.answer()
         return
 
@@ -106,14 +108,49 @@ async def gm_group_picked(callback: CallbackQuery, state: FSMContext):
     g = groups[idx]
     await state.update_data(gm_group_id=g["id"], gm_group_name=g["name"])
 
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
+
+    # Загружаем реальные даты занятий группы — не пустой список
+    busy = await _gm_group_dates_for_month(today.year, today.month, g["id"])
     await callback.message.edit_text(
-        f"Группа: «{g['name']}»\nВыберите дату занятия, которое переносим:",
-        reply_markup=get_calendar_keyboard(today.year, today.month, []),
+        f"Группа: «{g['name']}»\n"
+        f"Выберите дату занятия, которое переносим:\n"
+        f"🟨 — есть занятие группы",
+        reply_markup=get_calendar_keyboard(today.year, today.month, busy),
     )
     await state.set_state(GroupMoveState.select_old_date)
     await callback.answer()
+
+
+async def _gm_group_dates_for_month(year: int, month: int, group_id: str) -> list:
+    """
+    Возвращает даты месяца, на которых у группы есть активные занятия.
+    Используется для подсветки в календаре при выборе занятия на перенос.
+    """
+    try:
+        api = BackendAPIClient()
+        first = datetime(year, month, 1)
+        if month == 12:
+            last = datetime(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            last = datetime(year, month + 1, 1) - timedelta(days=1)
+        bookings = await api.bookings_for_range(
+            start_date=first.strftime("%Y-%m-%d"),
+            end_date=last.strftime("%Y-%m-%d"),
+        )
+        dates = set()
+        for b in bookings:
+            if b.get("deleted_at"):
+                continue
+            if b.get("status") in ("cancelled", "specialist_cancelled"):
+                continue
+            if b.get("group_id") == group_id and b.get("booking_type") == "group":
+                dates.add(b["start_time"][:10])
+        return list(dates)
+    except Exception as e:
+        logger.error(f"_gm_group_dates_for_month error: {e}")
+        return []
 
 
 # ---------------------------------------------------------------------
@@ -129,7 +166,7 @@ async def gm_after_old_date(callback: CallbackQuery, state: FSMContext, date_str
         bookings = await api.bookings_for_date(date=date_str)
     except Exception as e:
         logger.exception("bookings_for_date error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_move"))
         return
 
     # Только групповые брони этой группы
@@ -148,51 +185,75 @@ async def gm_after_old_date(callback: CallbackQuery, state: FSMContext, date_str
 
     if not by_start:
         await callback.message.edit_text(
-            f"В этот день у группы «{user_data['gm_group_name']}» нет занятий.",
+            f"В этот день у группы «{user_data['gm_group_name']}» нет занятий.\n\n"
+            f"Выберите другую дату (🟨 — есть занятие группы).",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="schedule_move_group")
+                InlineKeyboardButton(text="⬅️ Назад к календарю", callback_data="gm_back_to_old_calendar")
             ]]),
         )
         return
 
-    if len(by_start) == 1:
-        only_start = next(iter(by_start.keys()))
-        await _go_to_new_date(callback, state, only_start, by_start[only_start])
-        return
-
-    # Несколько занятий в день — даём выбрать
-    starts = sorted(by_start.keys())
+    # Всегда показываем список найденных занятий — пусть даже одно.
+    # Пользователь видит что именно будет перенесено и нажимает кнопку.
     await state.update_data(gm_old_date=date_str)
+    await state.update_data(gm_sessions_cache={k: [b["id"] for b in v] for k, v in by_start.items()})
+
+    starts = sorted(by_start.keys())
     buttons = []
     for st in starts:
         time_label = st[11:16]
-        count = len(by_start[st])
+        clients = [b.get("client_name", "?") for b in by_start[st]]
+        count = len(clients)
+        # Показываем время и количество участников
         buttons.append([InlineKeyboardButton(
-            text=f"{time_label} ({count} чел.)",
+            text=f"🕐 {time_label} — {count} чел.",
             callback_data=f"gm_pick_session_{time_label}",
         )])
-    # Кэшируем by_start для второго шага
-    await state.update_data(gm_sessions_cache={k: [b["id"] for b in v] for k, v in by_start.items()})
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="schedule_move_group")])
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад к календарю", callback_data="gm_back_to_old_calendar")])
+
+    date_label = _fmt_date(date_str)
+    header = (
+        f"Группа: «{user_data['gm_group_name']}»\n"
+        f"Дата: {date_label}\n\n"
+        f"{'Выберите занятие для переноса:' if len(starts) > 1 else 'Занятие для переноса:'}"
+    )
     await callback.message.edit_text(
-        f"В этот день несколько занятий группы «{user_data['gm_group_name']}». Выберите:",
+        header,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await state.set_state(GroupMoveState.select_session)
+
+
+@router.callback_query(F.data == "gm_back_to_old_calendar")
+async def gm_back_to_old_calendar(callback: CallbackQuery, state: FSMContext):
+    """Возврат к календарю выбора старой даты с подсветкой дат группы."""
+    user_data = await state.get_data()
+    year = user_data.get("calendar_year", dt_now().year)
+    month = user_data.get("calendar_month", dt_now().month)
+    group_id = user_data.get("gm_group_id", "")
+    group_name = user_data.get("gm_group_name", "")
+    busy = await _gm_group_dates_for_month(year, month, group_id)
+    await callback.message.edit_text(
+        f"Группа: «{group_name}»\n"
+        f"Выберите дату занятия, которое переносим:\n"
+        f"🟨 — есть занятие группы",
+        reply_markup=get_calendar_keyboard(year, month, busy),
+    )
+    await state.set_state(GroupMoveState.select_old_date)
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("gm_pick_session_"), GroupMoveState.select_session)
 async def gm_session_picked(callback: CallbackQuery, state: FSMContext):
     time_label = callback.data.rsplit("_", 1)[-1]
     user_data = await state.get_data()
-    date_str = user_data["gm_old_date"]
     cache = user_data.get("gm_sessions_cache") or {}
     # Найти полный start_time по time_label
     full_start = next((k for k in cache if k[11:16] == time_label), None)
     if not full_start:
         await callback.answer("Занятие не найдено.", show_alert=True)
         return
-    # client_count для отчёта
     booking_ids = cache[full_start]
     await _go_to_new_date(callback, state, full_start, [{"id": bid} for bid in booking_ids])
 
@@ -205,7 +266,7 @@ async def _go_to_new_date(
         gm_old_start=old_start_iso,
         gm_session_count=len(sample_bookings),
     )
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     user_data = await state.get_data()
     await callback.message.edit_text(
@@ -241,7 +302,8 @@ async def gm_after_new_date(callback: CallbackQuery, state: FSMContext, date_str
     await callback.message.edit_text(
         f"Группа: «{user_data['gm_group_name']}»\n"
         f"Новая дата: {_fmt_date(date_str)}\n\n"
-        f"Выберите время:",
+        f"Выберите время:\n"
+        f"⚠️ Если слот уже занят у специалиста — система сообщит об ошибке.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
     )
     await state.set_state(GroupMoveState.select_new_time)
@@ -282,7 +344,7 @@ async def gm_time_picked(callback: CallbackQuery, state: FSMContext):
         return
     except Exception as e:
         logger.exception("booking_group_move error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_move"))
         await callback.answer()
         return
 
@@ -320,8 +382,8 @@ async def gm_time_picked(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "gm_back_to_new_date")
 async def gm_back_to_new_date(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
-    year = user_data.get("calendar_year", datetime.now().year)
-    month = user_data.get("calendar_month", datetime.now().month)
+    year = user_data.get("calendar_year", dt_now().year)
+    month = user_data.get("calendar_month", dt_now().month)
     await callback.message.edit_text(
         f"Группа: «{user_data['gm_group_name']}»\nВыберите новую дату:",
         reply_markup=get_calendar_keyboard(year, month, []),

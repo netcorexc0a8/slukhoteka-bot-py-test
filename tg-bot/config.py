@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     TIME_SLOT_DURATION: int = 1
     COLOR_FREE: str = "🟩"
     COLOR_BUSY: str = "🟨"
+    TIMEZONE: str = "Europe/Moscow"
 
     class Config:
         env_file = ".env"

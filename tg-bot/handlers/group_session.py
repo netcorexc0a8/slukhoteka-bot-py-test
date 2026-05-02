@@ -18,7 +18,9 @@
 """
 import asyncio
 import logging
+from utils.errors import friendly_error
 from datetime import datetime, timedelta
+from utils.dt import now as dt_now
 
 import httpx
 from aiogram import F, Router
@@ -102,7 +104,7 @@ async def gs_start(callback: CallbackQuery, state: FSMContext):
         groups = await api.groups_list()
     except Exception as e:
         logger.exception("groups_list error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_session"))
         await callback.answer()
         return
 
@@ -152,7 +154,7 @@ async def gs_group_picked(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     specialist_id = user_data.get("global_user_id")
 
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     busy = await _gs_busy_dates_for_month(today.year, today.month, specialist_id, group["id"])
     await callback.message.edit_text(
@@ -226,14 +228,14 @@ async def gs_show_time_slots(callback: CallbackQuery, state: FSMContext):
         await state.set_state(GroupSessionState.select_time)
     except Exception as e:
         logger.exception("gs time slots error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_session"))
 
 
 @router.callback_query(F.data == "gs_back_to_date", GroupSessionState.select_time)
 async def gs_back_to_date(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
-    year = user_data.get("calendar_year", datetime.now().year)
-    month = user_data.get("calendar_month", datetime.now().month)
+    year = user_data.get("calendar_year", dt_now().year)
+    month = user_data.get("calendar_month", dt_now().month)
     specialist_id = user_data.get("global_user_id")
     own_group_id = user_data.get("gs_group_id")
     busy = await _gs_busy_dates_for_month(year, month, specialist_id, own_group_id)
@@ -271,7 +273,7 @@ async def _show_attendees(callback: CallbackQuery, state: FSMContext, init: bool
         group = await api.group_get(group_id)
     except Exception as e:
         logger.exception("group_get error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_session"))
         return
 
     participants = [p for p in (group.get("participants") or []) if p.get("is_active")]
@@ -393,10 +395,10 @@ async def _show_co_specs(callback: CallbackQuery, state: FSMContext, init: bool 
     api = BackendAPIClient()
     try:
         users_resp = await api.users_get_all(limit=200)
-        users = users_resp if isinstance(users_resp, list) else users_resp.get("users", [])
+        users = users_resp  # users_get_all теперь всегда возвращает список
     except Exception as e:
         logger.exception("users_get_all error")
-        await callback.message.edit_text(f"Ошибка: {e}")
+        await callback.message.edit_text(friendly_error(e, "group_session"))
         return
 
     # Только специалисты/методисты/админы могут быть ведущими — все остальные не подходят

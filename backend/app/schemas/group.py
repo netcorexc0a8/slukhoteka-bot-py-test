@@ -36,6 +36,7 @@ class GroupParticipantInfo(BaseModel):
 class GroupResponse(GroupBase):
     id: str
     is_active: bool
+    service_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None

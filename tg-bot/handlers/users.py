@@ -4,6 +4,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from services.api_client import BackendAPIClient
+from utils.guards import require_role
+from utils.errors import friendly_error
 import logging
 
 router = Router()
@@ -22,15 +24,8 @@ class UsersState(StatesGroup):
     role_select_role = State()
 
 @router.message(F.text == "👤 Пользователи")
+@require_role("admin", "methodist")
 async def cmd_users(message: Message, state: FSMContext):
-    data = await state.get_data()
-    role = data.get("role", "specialist")
-
-    if role not in ["admin", "methodist"]:
-        await message.answer("У вас нет прав для управления пользователями")
-        from handlers.menu import show_main_menu
-        await show_main_menu(message, state)
-        return
 
     buttons = [
         [InlineKeyboardButton(text="📋 Список пользователей", callback_data="users_view")],
@@ -53,13 +48,14 @@ async def users_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @router.callback_query(F.data == "users_add")
+@require_role("admin", "methodist")
 async def users_add(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     role = data.get("role", "specialist")
 
     buttons = [
-        [InlineKeyboardButton(text="Методист", callback_data="users_role_methodist")],
-        [InlineKeyboardButton(text="Специалист", callback_data="users_role_specialist")],
+        [InlineKeyboardButton(text="Методист", callback_data="users_invite_role_methodist")],
+        [InlineKeyboardButton(text="Специалист", callback_data="users_invite_role_specialist")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="users_back")]
     ]
 
@@ -68,14 +64,14 @@ async def users_add(callback: CallbackQuery, state: FSMContext):
     await state.set_state(UsersState.add_select_role)
     await callback.answer()
 
-@router.callback_query(F.data.startswith("users_role_"))
+@router.callback_query(F.data.startswith("users_invite_role_"))
 async def users_role_selected(callback: CallbackQuery, state: FSMContext):
     role_map = {
         "methodist": "methodist",
         "specialist": "specialist"
     }
 
-    selected_role = callback.data.split("_")[-1]
+    selected_role = callback.data.replace("users_invite_role_", "")
     if selected_role not in role_map:
         await callback.answer("Неверная роль")
         return
@@ -99,10 +95,11 @@ async def users_role_selected(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error creating invite: {e}")
-        await callback.message.edit_text(f"Ошибка создания приглашения: {e}")
+        await callback.message.edit_text(friendly_error(e, "invite_create"))
         await callback.answer()
 
 @router.callback_query(F.data == "users_view")
+@require_role("admin", "methodist")
 async def users_view(callback: CallbackQuery, state: FSMContext):
     try:
         api_client = BackendAPIClient()
@@ -145,10 +142,11 @@ async def users_view(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error fetching users: {e}")
-        await callback.message.edit_text(f"Ошибка загрузки списка: {e}")
+        await callback.message.edit_text(friendly_error(e, "users_list"))
         await callback.answer()
 
 @router.callback_query(F.data == "users_edit_name")
+@require_role("admin", "methodist")
 async def users_edit_name_start(callback: CallbackQuery, state: FSMContext):
     try:
         api_client = BackendAPIClient()
@@ -176,7 +174,7 @@ async def users_edit_name_start(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error fetching users: {e}")
-        await callback.message.edit_text(f"Ошибка загрузки списка: {e}")
+        await callback.message.edit_text(friendly_error(e, "users_list"))
         await callback.answer()
 
 @router.callback_query(F.data.startswith("users_edit_name_"))
@@ -208,16 +206,11 @@ async def users_edit_name_input(message: Message, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error updating user name: {e}")
-        await message.answer(f"Ошибка изменения имени: {e}")
+        await message.answer(friendly_error(e, "users_edit_name"))
 
 @router.callback_query(F.data == "users_edit_role")
+@require_role("admin")
 async def users_edit_role_start(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    current_role = data.get("role", "specialist")
-
-    if current_role != "admin":
-        await callback.answer("Только администратор может изменять роли")
-        return
 
     try:
         api_client = BackendAPIClient()
@@ -254,7 +247,7 @@ async def users_edit_role_start(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error fetching users: {e}")
-        await callback.message.edit_text(f"Ошибка загрузки списка: {e}")
+        await callback.message.edit_text(friendly_error(e, "users_list"))
         await callback.answer()
 
 @router.callback_query(F.data.startswith("users_role_select_"))
@@ -300,10 +293,11 @@ async def users_role_set(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error updating user role: {e}")
-        await callback.message.edit_text(f"Ошибка изменения роли: {e}")
+        await callback.message.edit_text(friendly_error(e, "users_role"))
         await callback.answer()
 
 @router.callback_query(F.data == "users_delete")
+@require_role("admin", "methodist")
 async def users_delete_start(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     current_role = data.get("role", "specialist")
@@ -313,12 +307,7 @@ async def users_delete_start(callback: CallbackQuery, state: FSMContext):
         users = await api_client.users_get_all()
 
         if current_role == "methodist":
-            current_user_id = data.get("global_user_id")
             users = [u for u in users if u["role"] != "admin"]
-
-        if current_role == "specialist":
-            await callback.answer("У вас нет прав для удаления пользователей")
-            return
 
         if not users:
             await callback.message.edit_text("Нет доступных пользователей для удаления")
@@ -348,7 +337,7 @@ async def users_delete_start(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error fetching users: {e}")
-        await callback.message.edit_text(f"Ошибка загрузки списка: {e}")
+        await callback.message.edit_text(friendly_error(e, "users_list"))
         await callback.answer()
 
 @router.callback_query(F.data.startswith("users_delete_select_"))
@@ -385,10 +374,11 @@ async def users_delete_select(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error fetching user: {e}")
-        await callback.message.edit_text(f"Ошибка загрузки пользователя: {e}")
+        await callback.message.edit_text(friendly_error(e, "users_get"))
         await callback.answer()
 
 @router.callback_query(F.data == "users_delete_confirm")
+@require_role("admin", "methodist")
 async def users_delete_confirm(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     user_id = data.get("delete_user_id")
@@ -403,5 +393,5 @@ async def users_delete_confirm(callback: CallbackQuery, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error deleting user: {e}")
-        await callback.message.edit_text(f"Ошибка удаления пользователя: {e}")
+        await callback.message.edit_text(friendly_error(e, "users_delete"))
         await callback.answer()
