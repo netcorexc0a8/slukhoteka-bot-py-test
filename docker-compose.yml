@@ -67,25 +67,27 @@ services:
     volumes:
       - ./data/voice:/app/voice
 
-  # slukhoteka-vk-bot-test:
-  #   build:
-  #     context: ./vk-bot
-  #     dockerfile: Dockerfile
-  #   container_name: slukhoteka-vk-bot-test
-  #   restart: unless-stopped
-  #   environment:
-  #     VK_BOT_TOKEN: ${VK_BOT_TOKEN}
-  #     VK_GROUP_ID: ${VK_GROUP_ID}
-  #     BACKEND_URL: http://slukhoteka-backend-test:8000
-  #     START_HOUR: ${START_HOUR:-0}
-  #     END_HOUR: ${END_HOUR:-23}
-  #     TIME_SLOT_DURATION: ${TIME_SLOT_DURATION:-1}
-  #     COLOR_FREE: ${COLOR_FREE:-🟩}
-  #     COLOR_BUSY: ${COLOR_BUSY:-🟨}
-  #   depends_on:
-  #     - slukhoteka-backend-test
-  #   networks:
-  #     - slukhoteka-network-test
+  slukhoteka-vk-bot-test:
+    build:
+      context: ./vk-bot
+      dockerfile: Dockerfile
+    container_name: slukhoteka-vk-bot-test
+    restart: unless-stopped
+    environment:
+      VK_BOT_TOKEN: ${VK_BOT_TOKEN}
+      VK_GROUP_ID: ${VK_GROUP_ID}
+      BACKEND_URL: http://slukhoteka-backend-test:8000
+      START_HOUR: ${START_HOUR:-0}
+      END_HOUR: ${END_HOUR:-23}
+      TIME_SLOT_DURATION: ${TIME_SLOT_DURATION:-1}
+      COLOR_FREE: ${COLOR_FREE:-🟩}
+      COLOR_BUSY: ${COLOR_BUSY:-🟨}
+    depends_on:
+      - slukhoteka-backend-test
+    networks:
+      - slukhoteka-network-test
+    profiles:
+      - dev
 
   slukhoteka-aggregator-test:
     build:
@@ -102,8 +104,8 @@ services:
       - slukhoteka-backend-test
     networks:
       - slukhoteka-network-test
-    profiles:
-      - aggregator
+    # profiles:
+    #   - dev
 
 networks:
   slukhoteka-network-test:
