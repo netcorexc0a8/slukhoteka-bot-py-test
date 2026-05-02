@@ -1183,6 +1183,12 @@ async def calendar_callback(callback: CallbackQuery, state: FSMContext):
             busy = await _gs_busy_dates_for_month(
                 year, month, specialist_id, user_data.get("gs_group_id")
             )
+        # В group_move flow при выборе старой даты — показываем даты занятий группы.
+        elif current_state and "GroupMoveState" in current_state and "select_old_date" in current_state:
+            from handlers.group_move import _gm_group_dates_for_month
+            busy = await _gm_group_dates_for_month(
+                year, month, user_data.get("gm_group_id", "")
+            )
         else:
             busy = await _busy_dates_for_month(
                 year, month, specialist_id if role == "specialist" else None

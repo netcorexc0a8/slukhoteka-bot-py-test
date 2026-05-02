@@ -179,7 +179,7 @@ async def _show_group_detail(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "grp_create")
 async def grp_create(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
-        "Введите название группы (например, «Среда 10:00»):",
+        "Введите название группы\n(например, «Группа \"Будем танцевать\"»):",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="⬅️ Отмена", callback_data="groups_menu")
         ]]),
