@@ -15,6 +15,7 @@ Reuse: общий calendar_callback в schedule.py перенаправляет 
 """
 import logging
 from datetime import datetime, timedelta
+from utils.dt import now as dt_now
 
 import httpx
 from aiogram import F, Router
@@ -106,7 +107,7 @@ async def gm_group_picked(callback: CallbackQuery, state: FSMContext):
     g = groups[idx]
     await state.update_data(gm_group_id=g["id"], gm_group_name=g["name"])
 
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await callback.message.edit_text(
         f"Группа: «{g['name']}»\nВыберите дату занятия, которое переносим:",
@@ -205,7 +206,7 @@ async def _go_to_new_date(
         gm_old_start=old_start_iso,
         gm_session_count=len(sample_bookings),
     )
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     user_data = await state.get_data()
     await callback.message.edit_text(
@@ -320,8 +321,8 @@ async def gm_time_picked(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "gm_back_to_new_date")
 async def gm_back_to_new_date(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
-    year = user_data.get("calendar_year", datetime.now().year)
-    month = user_data.get("calendar_month", datetime.now().month)
+    year = user_data.get("calendar_year", dt_now().year)
+    month = user_data.get("calendar_month", dt_now().month)
     await callback.message.edit_text(
         f"Группа: «{user_data['gm_group_name']}»\nВыберите новую дату:",
         reply_markup=get_calendar_keyboard(year, month, []),

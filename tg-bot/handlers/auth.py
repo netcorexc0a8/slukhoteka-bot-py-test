@@ -4,7 +4,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import StateFilter
 from aiogram.fsm.state import StatesGroup, State
+from typing import TYPE_CHECKING
 import logging
+
+if TYPE_CHECKING:
+    from services.api_client import BackendAPIClient
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -14,13 +18,39 @@ class AuthState(StatesGroup):
     waiting_for_invite_code = State()
     authorized = State()
 
-@router.message(F.text == "/start")
-async def cmd_start(message: Message, state: FSMContext):
-    await state.clear()
 
-    # Сначала проверяем авторизацию по Telegram ID
-    from services.api_client import BackendAPIClient
-    api_client = BackendAPIClient()
+ROLE_DISPLAY = {
+    "specialist": "Специалист",
+    "admin": "Администратор",
+    "methodist": "Методист",
+}
+
+
+async def _finalize_auth(message: Message, state: FSMContext, result: dict, phone: str):
+    """Завершает авторизацию: сохраняет данные в state, показывает одно приветственное сообщение с меню."""
+    await state.update_data(
+        global_user_id=result["global_user_id"],
+        role=result["role"],
+        platform_user_id=result["platform_user_id"],
+        phone=phone,
+    )
+    await state.set_state(AuthState.authorized)
+
+    from handlers.menu import _build_keyboard
+    user_name = result.get("name") or message.from_user.first_name
+    role_display = ROLE_DISPLAY.get(result["role"], result["role"].capitalize())
+    keyboard = _build_keyboard(result["role"])
+
+    await message.answer(
+        f"👋 Привет, {user_name}!\n\n"
+        f"Добро пожаловать в систему «Слухотека»\n\n"
+        f"🎭 Ваша роль: {role_display}",
+        reply_markup=keyboard,
+    )
+
+@router.message(F.text == "/start")
+async def cmd_start(message: Message, state: FSMContext, api_client: "BackendAPIClient"):
+    await state.clear()
 
     auth_result = await api_client.auth_check(
         platform="telegram",
@@ -29,32 +59,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
     if auth_result:
         # Пользователь уже авторизован
-        await state.update_data(
-            global_user_id=auth_result["global_user_id"],
-            role=auth_result["role"],
-            platform_user_id=auth_result["platform_user_id"],
-            phone=auth_result.get("phone", "")
-        )
-
-        user_name = auth_result.get("name") or message.from_user.first_name
-        role_display = auth_result['role'].capitalize()
-        if role_display == 'Specialist':
-            role_display = 'Специалист'
-        elif role_display == 'Admin':
-            role_display = 'Администратор'
-        elif role_display == 'Methodist':
-            role_display = 'Методист'
-
-        await message.answer(
-            f"👋 Привет, {user_name}!\n\n"
-            f"Добро пожаловать в систему управления расписанием специалистов \"Слухотека\"\n\n"
-            f"🎭 Ваша роль: {role_display}\n\n"
-            f"Выберите действие в меню:"
-        )
-        await state.set_state(AuthState.authorized)
-
-        from handlers.menu import show_main_menu
-        await show_main_menu(message, state)
+        await _finalize_auth(message, state, auth_result, auth_result.get("phone", ""))
     else:
         # Пользователь не авторизован - запрашиваем номер телефона
         contact_button = KeyboardButton(text="📱 Поделиться номером", request_contact=True)
@@ -68,11 +73,8 @@ async def cmd_start(message: Message, state: FSMContext):
         await state.set_state(AuthState.waiting_for_phone)
 
 @router.message(StateFilter(AuthState.waiting_for_phone))
-async def process_phone_input(message: Message, state: FSMContext):
+async def process_phone_input(message: Message, state: FSMContext, api_client: "BackendAPIClient"):
     logger.info(f"Processing message in waiting_for_phone state. Has contact: {message.contact is not None}")
-
-    from services.api_client import BackendAPIClient
-    api_client = BackendAPIClient()
 
     # Удаляем сообщение с контактом, если оно есть
     if message.contact:
@@ -119,34 +121,7 @@ async def process_phone_input(message: Message, state: FSMContext):
                 name=user_name
             )
             logger.info(f"Auth successful: {result}")
-
-            await state.update_data(
-                global_user_id=result["global_user_id"],
-                role=result["role"],
-                platform_user_id=result["platform_user_id"],
-                phone=phone
-            )
-
-            user_name = result.get("name") or message.from_user.first_name
-            role_display = result['role'].capitalize()
-            if role_display == 'Specialist':
-                role_display = 'Специалист'
-            elif role_display == 'Admin':
-                role_display = 'Администратор'
-            elif role_display == 'Methodist':
-                role_display = 'Методист'
-
-            await message.answer(
-                f"👋 Привет, {user_name}!\n\n"
-                f"Добро пожаловать в систему управления расписанием специалистов \"Слухотека\"\n\n"
-                f"🎭 Ваша роль: {role_display}\n\n"
-                f"Выберите действие в меню:",
-                reply_markup=None
-            )
-            await state.set_state(AuthState.authorized)
-
-            from handlers.menu import show_main_menu
-            await show_main_menu(message, state)
+            await _finalize_auth(message, state, result, phone)
         else:
             # Пользователь не существует - проверяем, является ли номер администраторским
             from config import settings
@@ -160,34 +135,7 @@ async def process_phone_input(message: Message, state: FSMContext):
                     name=user_name,
                     role="admin"
                 )
-
-                await state.update_data(
-                    global_user_id=result["global_user_id"],
-                    role=result["role"],
-                    platform_user_id=result["platform_user_id"],
-                    phone=phone
-                )
-
-                user_name = result.get("name") or message.from_user.first_name
-                role_display = result['role'].capitalize()
-                if role_display == 'Specialist':
-                    role_display = 'Специалист'
-                elif role_display == 'Admin':
-                    role_display = 'Администратор'
-                elif role_display == 'Methodist':
-                    role_display = 'Методист'
-
-                await message.answer(
-                    f"👋 Привет, {user_name}!\n\n"
-                    f"Добро пожаловать в систему управления расписанием специалистов \"Слухотека\"\n\n"
-                    f"🎭 Ваша роль: {role_display}\n\n"
-                    f"Выберите действие в меню:",
-                    reply_markup=None
-                )
-                await state.set_state(AuthState.authorized)
-
-                from handlers.menu import show_main_menu
-                await show_main_menu(message, state)
+                await _finalize_auth(message, state, result, phone)
             else:
                 # Обычный пользователь - запрашиваем invite code
                 logger.info(f"User not found for phone {phone}, requesting invite code")
@@ -199,19 +147,16 @@ async def process_phone_input(message: Message, state: FSMContext):
                 await state.set_state(AuthState.waiting_for_invite_code)
 
     except Exception as e:
-        logger.exception(f"Auth error: {e}")
-        await message.answer(f"Ошибка авторизации: {e}")
+        from utils.errors import friendly_error
+        await message.answer(friendly_error(e, "auth"))
 
 @router.message(StateFilter(AuthState.waiting_for_invite_code))
-async def process_invite_code(message: Message, state: FSMContext):
+async def process_invite_code(message: Message, state: FSMContext, api_client: "BackendAPIClient"):
     invite_code = message.text.strip()
 
     if not invite_code:
         await message.answer("Код не может быть пустым. Пожалуйста, введите код:")
         return
-
-    from services.api_client import BackendAPIClient
-    api_client = BackendAPIClient()
 
     try:
         user_data = await state.get_data()
@@ -241,35 +186,8 @@ async def process_invite_code(message: Message, state: FSMContext):
         await api_client.invite_use(invite_code, result["global_user_id"])
 
         logger.info(f"User created with role: {role}")
-
-        await state.update_data(
-            global_user_id=result["global_user_id"],
-            role=result["role"],
-            platform_user_id=result["platform_user_id"],
-            phone=phone
-        )
-
-        user_name = result.get("name") or message.from_user.first_name
-        role_display = result['role'].capitalize()
-        if role_display == 'Specialist':
-            role_display = 'Специалист'
-        elif role_display == 'Admin':
-            role_display = 'Администратор'
-        elif role_display == 'Methodist':
-            role_display = 'Методист'
-
-        await message.answer(
-            f"👋 Привет, {user_name}!\n\n"
-            f"Добро пожаловать в систему управления расписанием специалистов \"Слухотека\"\n\n"
-            f"🎭 Ваша роль: {role_display}\n\n"
-            f"Выберите действие в меню:"
-        )
-        await state.set_state(AuthState.authorized)
-
-        from handlers.menu import show_main_menu
-        await show_main_menu(message, state)
+        await _finalize_auth(message, state, result, phone)
 
     except Exception as e:
-        logger.exception(f"Invite code error: {e}")
-        await message.answer(f"❌ Ошибка: {e}\n\nПожалуйста, попробуйте снова:")
-
+        from utils.errors import friendly_error
+        await message.answer(f"❌ {friendly_error(e, 'invite_code')}\n\nПожалуйста, попробуйте снова:")

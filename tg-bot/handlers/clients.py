@@ -16,6 +16,7 @@
 """
 import logging
 from datetime import datetime
+from utils.dt import now as dt_now
 from typing import Optional
 
 import httpx
@@ -135,7 +136,7 @@ async def _show_client_card(callback: CallbackQuery, state: FSMContext):
 
     # Ближайшая бронь — смотрим 90 дней вперёд
     try:
-        today = datetime.now()
+        today = dt_now()
         start_date = today.strftime("%Y-%m-%d")
         end_date = today.replace(year=today.year + 1).strftime("%Y-%m-%d")
         bookings = await api.bookings_for_range(

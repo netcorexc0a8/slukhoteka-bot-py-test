@@ -58,8 +58,8 @@ async def users_add(callback: CallbackQuery, state: FSMContext):
     role = data.get("role", "specialist")
 
     buttons = [
-        [InlineKeyboardButton(text="Методист", callback_data="users_role_methodist")],
-        [InlineKeyboardButton(text="Специалист", callback_data="users_role_specialist")],
+        [InlineKeyboardButton(text="Методист", callback_data="users_invite_role_methodist")],
+        [InlineKeyboardButton(text="Специалист", callback_data="users_invite_role_specialist")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="users_back")]
     ]
 
@@ -68,14 +68,14 @@ async def users_add(callback: CallbackQuery, state: FSMContext):
     await state.set_state(UsersState.add_select_role)
     await callback.answer()
 
-@router.callback_query(F.data.startswith("users_role_"))
+@router.callback_query(F.data.startswith("users_invite_role_"))
 async def users_role_selected(callback: CallbackQuery, state: FSMContext):
     role_map = {
         "methodist": "methodist",
         "specialist": "specialist"
     }
 
-    selected_role = callback.data.split("_")[-1]
+    selected_role = callback.data.replace("users_invite_role_", "")
     if selected_role not in role_map:
         await callback.answer("Неверная роль")
         return

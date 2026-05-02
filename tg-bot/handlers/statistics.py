@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from services.api_client import BackendAPIClient
 from datetime import datetime, timedelta
+from utils.dt import now as dt_now
 from collections import defaultdict
 import logging
 
@@ -28,7 +29,7 @@ async def cmd_statistics(message: Message, state: FSMContext):
         # users_get_all может возвращать либо список, либо dict с "users"
         users = users_resp if isinstance(users_resp, list) else users_resp.get("users", [])
 
-        today = datetime.now()
+        today = dt_now()
         first_day = today.replace(day=1)
         last_day = (first_day + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 

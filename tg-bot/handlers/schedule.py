@@ -11,6 +11,7 @@
 """
 import logging
 from datetime import datetime, timedelta
+from utils.dt import now as dt_now
 
 import httpx
 from aiogram import F, Router
@@ -49,7 +50,7 @@ def _service_short_label(service_type: str) -> str:
         "subscription_1": "Абонемент 1",
         "subscription_4": "Абонемент 4",
         "subscription_8": "Абонемент 8",
-        "logorhythmics": "Алгоритмика",
+        "logorhythmics": "Логоритмика",
     }.get(service_type, service_type)
 
 
@@ -104,6 +105,7 @@ class ScheduleState(StatesGroup):
 
     delete_select_date = State()
     delete_select_booking = State()
+    delete_confirm = State()
 
     # Перенос индивидуальной брони (отдельный пункт меню)
     move_pick_old_date = State()  # выбираем дату, на которой стоит запись
@@ -184,7 +186,7 @@ async def schedule_back(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "schedule_view")
 async def schedule_view_start(callback: CallbackQuery, state: FSMContext):
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await _show_calendar(callback, state, "Выберите дату для просмотра:", today.year, today.month)
     await state.set_state(ScheduleState.view_select_date)
@@ -419,7 +421,7 @@ async def schedule_create_new_client_phone(message: Message, state: FSMContext):
     specialist_id = user_data.get("global_user_id")
 
     if phone_raw == "-" or not phone_raw:
-        phone = f"manual:{specialist_id}:{int(datetime.now().timestamp())}"
+        phone = f"manual:{specialist_id}:{int(dt_now().timestamp())}"
     else:
         phone = phone_raw
 
@@ -511,7 +513,7 @@ async def schedule_create_sub_picked(callback: CallbackQuery, state: FSMContext)
     sub_id = int(callback.data.rsplit("_", 1)[-1])
     await state.update_data(create_subscription_id=sub_id)
 
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await _show_calendar(callback, state, "Выберите дату:", today.year, today.month)
     await state.set_state(ScheduleState.create_select_date)
@@ -579,8 +581,8 @@ async def _show_time_slots(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "sched_back_to_date", ScheduleState.create_select_time)
 async def sched_back_to_date(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
-    year = user_data.get("calendar_year", datetime.now().year)
-    month = user_data.get("calendar_month", datetime.now().month)
+    year = user_data.get("calendar_year", dt_now().year)
+    month = user_data.get("calendar_month", dt_now().month)
     await _show_calendar(callback, state, "Выберите дату:", year, month)
     await state.set_state(ScheduleState.create_select_date)
     await callback.answer()
@@ -763,7 +765,7 @@ async def sched_recurring_yes(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "schedule_delete")
 async def schedule_delete_start(callback: CallbackQuery, state: FSMContext):
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await _show_calendar(callback, state, "Выберите дату записи для удаления:", today.year, today.month)
     await state.set_state(ScheduleState.delete_select_date)
@@ -823,9 +825,32 @@ async def schedule_delete_select_booking(callback: CallbackQuery, state: FSMCont
 
 @router.callback_query(F.data.startswith("sched_del_pick_"), ScheduleState.delete_select_booking)
 async def schedule_delete_pick(callback: CallbackQuery, state: FSMContext):
-    """Удаление брони сразу, без промежуточного подтверждения."""
+    """Показываем подтверждение перед удалением."""
     booking_id = int(callback.data.rsplit("_", 1)[-1])
-    actor_id = (await state.get_data()).get("global_user_id")
+    await state.update_data(delete_booking_id=booking_id)
+
+    user_data = await state.get_data()
+    date_str = user_data.get("delete_date", "")
+    date_label = _format_date_human(date_str) if date_str else ""
+
+    await callback.message.edit_text(
+        f"🗑️ Удалить запись{' на ' + date_label if date_label else ''}?\n\n"
+        f"Занятие вернётся в абонемент клиента.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data="sched_del_confirm")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="schedule_delete")],
+        ]),
+    )
+    await state.set_state(ScheduleState.delete_confirm)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "sched_del_confirm", ScheduleState.delete_confirm)
+async def schedule_delete_confirm(callback: CallbackQuery, state: FSMContext):
+    """Выполняем удаление после подтверждения."""
+    user_data = await state.get_data()
+    booking_id = user_data.get("delete_booking_id")
+    actor_id = user_data.get("global_user_id")
     try:
         api = BackendAPIClient()
         ok = await api.booking_delete(booking_id=booking_id, actor_id=actor_id)
@@ -854,7 +879,7 @@ async def schedule_delete_pick(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "schedule_move_individual")
 async def schedule_move_individual_start(callback: CallbackQuery, state: FSMContext):
     """Шаг 1 переноса: выбираем дату записи, которую переносим."""
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await _show_calendar(callback, state, "Выберите дату записи, которую переносим:", today.year, today.month)
     await state.set_state(ScheduleState.move_pick_old_date)
@@ -920,7 +945,7 @@ async def sched_move_picked(callback: CallbackQuery, state: FSMContext):
     """Шаг 3: запись выбрана — спрашиваем новую дату."""
     booking_id = int(callback.data.rsplit("_", 1)[-1])
     await state.update_data(move_booking_id=booking_id)
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     await _show_calendar(callback, state, "Выберите новую дату:", today.year, today.month)
     await state.set_state(ScheduleState.move_select_date)
@@ -976,8 +1001,8 @@ async def _show_move_time_slots(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "sched_move_back_to_date", ScheduleState.move_select_time)
 async def sched_move_back_to_date(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
-    year = user_data.get("calendar_year", datetime.now().year)
-    month = user_data.get("calendar_month", datetime.now().month)
+    year = user_data.get("calendar_year", dt_now().year)
+    month = user_data.get("calendar_month", dt_now().month)
     await _show_calendar(callback, state, "Выберите новую дату:", year, month)
     await state.set_state(ScheduleState.move_select_date)
     await callback.answer()
@@ -1098,8 +1123,8 @@ async def calendar_callback(callback: CallbackQuery, state: FSMContext):
 
     if action in ("prev", "next") and len(parts) > 2 and parts[2] == "month":
         user_data = await state.get_data()
-        year = user_data.get("calendar_year", datetime.now().year)
-        month = user_data.get("calendar_month", datetime.now().month)
+        year = user_data.get("calendar_year", dt_now().year)
+        month = user_data.get("calendar_month", dt_now().month)
         if action == "prev":
             year, month = (year - 1, 12) if month == 1 else (year, month - 1)
         else:

@@ -6,10 +6,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 router = Router()
 
 
-async def show_main_menu(message: Message, state: FSMContext):
-    data = await state.get_data()
-    role = data.get("role", "specialist")
-
+def _build_keyboard(role: str) -> ReplyKeyboardMarkup:
     if role == "admin":
         buttons = [
             [KeyboardButton(text="👤 Пользователи"), KeyboardButton(text="📅 Расписание")],
@@ -28,10 +25,10 @@ async def show_main_menu(message: Message, state: FSMContext):
             [KeyboardButton(text="📅 Расписание"), KeyboardButton(text="📊 Экспорт Excel")],
             [KeyboardButton(text="ℹ️ Помощь")],
         ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=buttons,
-        resize_keyboard=True,
-    )
 
-    await message.answer("Главное меню:", reply_markup=keyboard)
+async def show_main_menu(message: Message, state: FSMContext):
+    data = await state.get_data()
+    role = data.get("role", "specialist")
+    await message.answer("Главное меню:", reply_markup=_build_keyboard(role))

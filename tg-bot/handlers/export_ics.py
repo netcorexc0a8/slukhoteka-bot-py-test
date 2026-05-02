@@ -3,6 +3,7 @@ from aiogram.types import Message, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from services.api_client import BackendAPIClient
 from datetime import datetime, timedelta
+from utils.dt import now as dt_now
 import logging
 
 router = Router()
@@ -23,7 +24,7 @@ async def cmd_export_ics(message: Message, state: FSMContext):
     try:
         api_client = BackendAPIClient()
 
-        today = datetime.now()
+        today = dt_now()
         first_day = today.replace(day=1)
         last_day = (first_day + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 
@@ -67,6 +68,7 @@ def _ics_escape(s: str) -> str:
 
 
 def generate_ics(bookings):
+    from config import settings as _s
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -74,7 +76,7 @@ def generate_ics(bookings):
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
         "X-WR-CALNAME:Слухотека",
-        "X-WR-TIMEZONE:Europe/Moscow",
+        f"X-WR-TIMEZONE:{_s.TIMEZONE}",
         "X-WR-CALDESC:Расписание записи клиентов",
     ]
 

@@ -1,5 +1,5 @@
 """
-Создание группового занятия (алгоритмика).
+Создание группового занятия (логоритмика).
 
 Поток:
   «📅 Расписание» → «➕ Создать групповое занятие»
@@ -12,13 +12,14 @@
 
 Логика проверок (на стороне backend):
   - Каждая бронь должна быть привязана к абонементу клиента (logorhythmics).
-  - Если у клиента нет активного абонемента «Алгоритмика» с привязкой к этой
+  - Если у клиента нет активного абонемента «Логоритмика» с привязкой к этой
     группе — бот покажет это в списке отметки и не даст пометить участника.
   - Weekly limit (раз в неделю) — backend проверит при создании.
 """
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from utils.dt import now as dt_now
 
 import httpx
 from aiogram import F, Router
@@ -152,7 +153,7 @@ async def gs_group_picked(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     specialist_id = user_data.get("global_user_id")
 
-    today = datetime.now()
+    today = dt_now()
     await state.update_data(calendar_year=today.year, calendar_month=today.month)
     busy = await _gs_busy_dates_for_month(today.year, today.month, specialist_id, group["id"])
     await callback.message.edit_text(
@@ -232,8 +233,8 @@ async def gs_show_time_slots(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "gs_back_to_date", GroupSessionState.select_time)
 async def gs_back_to_date(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
-    year = user_data.get("calendar_year", datetime.now().year)
-    month = user_data.get("calendar_month", datetime.now().month)
+    year = user_data.get("calendar_year", dt_now().year)
+    month = user_data.get("calendar_month", dt_now().month)
     specialist_id = user_data.get("global_user_id")
     own_group_id = user_data.get("gs_group_id")
     busy = await _gs_busy_dates_for_month(year, month, specialist_id, own_group_id)

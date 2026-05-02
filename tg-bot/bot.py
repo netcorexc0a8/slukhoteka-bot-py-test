@@ -11,7 +11,10 @@ from services.api_client import BackendAPIClient
 from middlewares.auth_middleware import AuthMiddleware
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 bot = Bot(
@@ -48,7 +51,11 @@ dp["api_client"] = api_client
 
 async def main():
     logger.info("Starting Telegram bot...")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await api_client.aclose()
+        await bot.session.close()
 
 
 if __name__ == "__main__":

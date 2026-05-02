@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from services.api_client import BackendAPIClient
 import logging
 from datetime import datetime, timedelta
+from utils.dt import now as dt_now
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ async def cmd_sync(message: Message, state: FSMContext):
         current_user_id = data.get("global_user_id")
         current_user_role = data.get("role", "specialist")
 
-        today = message.date
+        today = dt_now()
         first_day = today.replace(day=1)
         last_day = (first_day + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 
