@@ -10,4 +10,3 @@ README_*.md
 __pycache__/
 *.py[cod]
 .kilo
-.yml
