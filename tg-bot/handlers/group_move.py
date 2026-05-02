@@ -243,7 +243,8 @@ async def gm_after_new_date(callback: CallbackQuery, state: FSMContext, date_str
     await callback.message.edit_text(
         f"Группа: «{user_data['gm_group_name']}»\n"
         f"Новая дата: {_fmt_date(date_str)}\n\n"
-        f"Выберите время:",
+        f"Выберите время:\n"
+        f"⚠️ Если слот уже занят у специалиста — система сообщит об ошибке.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
     )
     await state.set_state(GroupMoveState.select_new_time)

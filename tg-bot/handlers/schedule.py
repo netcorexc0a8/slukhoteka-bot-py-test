@@ -340,26 +340,62 @@ async def schedule_create_start(callback: CallbackQuery, state: FSMContext):
 
     clients = [c for c in clients if not c.get("deleted_at")]
     clients.sort(key=lambda c: (c.get("name") or "").lower())
-
     await state.update_data(create_clients_cache=clients)
+    await _show_create_clients_page(callback, state, page=0)
+
+
+_CREATE_PAGE_SIZE = 10
+
+
+async def _show_create_clients_page(callback: CallbackQuery, state: FSMContext, page: int = 0):
+    user_data = await state.get_data()
+    clients = user_data.get("create_clients_cache") or []
+
+    if not clients:
+        buttons = [
+            [InlineKeyboardButton(text="➕ Новый клиент", callback_data="sched_create_new_client")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="sched_back_to_main")],
+        ]
+        await callback.message.edit_text(
+            "У вас пока нет клиентов. Создайте первого:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+        await state.set_state(ScheduleState.create_select_client)
+        await callback.answer()
+        return
+
+    total = len(clients)
+    total_pages = max(1, (total + _CREATE_PAGE_SIZE - 1) // _CREATE_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    page_clients = clients[page * _CREATE_PAGE_SIZE : (page + 1) * _CREATE_PAGE_SIZE]
 
     buttons = []
-    for i, c in enumerate(clients):
+    for c in page_clients:
+        global_idx = clients.index(c)
         label = c.get("name", "Без имени")
         if len(label) > 50:
             label = label[:47] + "…"
         buttons.append([InlineKeyboardButton(
             text=label,
-            callback_data=f"sched_create_client_{i}",
+            callback_data=f"sched_create_client_{global_idx}",
         )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"sched_create_page_{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"sched_create_page_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
     buttons.append([InlineKeyboardButton(text="➕ Новый клиент", callback_data="sched_create_new_client")])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="sched_back_to_main")])
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    msg = "Выберите клиента:"
-    if not clients:
-        msg = "У вас пока нет клиентов. Создайте первого:"
-    await callback.message.edit_text(msg, reply_markup=keyboard)
+    page_label = f" (стр. {page + 1}/{total_pages})" if total_pages > 1 else ""
+    await callback.message.edit_text(
+        f"Выберите клиента{page_label}:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
     await state.set_state(ScheduleState.create_select_client)
     await callback.answer()
 
@@ -369,6 +405,12 @@ async def sched_back_to_main(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
     await cmd_schedule(callback.message, state)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sched_create_page_"), ScheduleState.create_select_client)
+async def schedule_create_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split("_")[-1])
+    await _show_create_clients_page(callback, state, page=page)
 
 
 @router.callback_query(F.data.startswith("sched_create_client_"), ScheduleState.create_select_client)

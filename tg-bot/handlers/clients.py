@@ -35,6 +35,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 DAY_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+PAGE_SIZE = 10  # клиентов на страницу
 
 
 class ClientsState(StatesGroup):
@@ -49,26 +50,38 @@ class ClientsState(StatesGroup):
 
 @router.callback_query(F.data == "clients_menu")
 async def clients_menu(callback: CallbackQuery, state: FSMContext):
-    await _show_clients_list(callback, state)
+    # Сбрасываем кеш, чтобы список всегда был актуальным
+    await state.update_data(cl_clients_cache=None)
+    await _show_clients_list(callback, state, page=0)
 
 
-async def _show_clients_list(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data.startswith("cl_page_"))
+async def clients_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split("_")[-1])
+    await _show_clients_list(callback, state, page=page)
+    await callback.answer()
+
+
+async def _show_clients_list(callback: CallbackQuery, state: FSMContext, page: int = 0):
     user_data = await state.get_data()
     specialist_id = user_data.get("global_user_id")
     role = user_data.get("role", "specialist")
 
-    api = BackendAPIClient()
-    try:
-        uid = None if role in ("admin", "methodist") else specialist_id
-        clients = await api.clients_get_all(user_id=uid)
-    except Exception as e:
-        logger.exception("clients list error")
-        await callback.message.edit_text(friendly_error(e, "clients"))
-        return
+    # Берём кеш или загружаем заново
+    clients = user_data.get("cl_clients_cache")
+    if clients is None:
+        api = BackendAPIClient()
+        try:
+            uid = None if role in ("admin", "methodist") else specialist_id
+            clients = await api.clients_get_all(user_id=uid)
+        except Exception as e:
+            logger.exception("clients list error")
+            await callback.message.edit_text(friendly_error(e, "clients"))
+            return
 
-    clients = [c for c in clients if not c.get("deleted_at")]
-    clients.sort(key=lambda c: (c.get("name") or "").lower())
-    await state.update_data(cl_clients_cache=clients)
+        clients = [c for c in clients if not c.get("deleted_at")]
+        clients.sort(key=lambda c: (c.get("name") or "").lower())
+        await state.update_data(cl_clients_cache=clients)
 
     if not clients:
         await callback.message.edit_text(
@@ -80,19 +93,37 @@ async def _show_clients_list(callback: CallbackQuery, state: FSMContext):
         )
         return
 
+    total = len(clients)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+
+    page_clients = clients[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
+
     buttons = []
-    for i, c in enumerate(clients):
+    for i, c in enumerate(page_clients):
+        global_idx = page * PAGE_SIZE + i
         label = c.get("name") or "—"
         if len(label) > 50:
             label = label[:47] + "…"
         buttons.append([InlineKeyboardButton(
             text=label,
-            callback_data=f"cl_pick_{i}",
+            callback_data=f"cl_pick_{global_idx}",
         )])
+
+    # Навигация по страницам
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"cl_page_{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"cl_page_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
     buttons.append([InlineKeyboardButton(text="⬅️ В меню расписания", callback_data="sched_back_to_main")])
 
+    page_label = f" (стр. {page + 1}/{total_pages})" if total_pages > 1 else ""
     await callback.message.edit_text(
-        f"👤 Клиенты ({len(clients)}):",
+        f"👤 Клиенты ({total}){page_label}:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await state.set_state(ClientsState.select_client)
